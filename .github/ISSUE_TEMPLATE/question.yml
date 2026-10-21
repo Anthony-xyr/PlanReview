@@ -1,0 +1,45 @@
+name: ❓ Question / 使用问题
+description: 使用中遇到的问题或疑问
+title: "[Question] "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提问前,请先查看 [README](https://github.com/Anthony-xyr/PlanReview/blob/main/README.md) 和已有的 Issues。
+
+  - type: textarea
+    id: question
+    attributes:
+      label: 你的问题
+      description: 清楚地描述你的问题
+      placeholder: 我想知道如何...
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: 已尝试的方法
+      description: 你已经尝试过什么?
+      placeholder: 我试过...但是...
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: 问题类别
+      options:
+        - 安装和配置
+        - 功能使用
+        - AI 功能配置
+        - 课表导入
+        - 数据备份和恢复
+        - 其他
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: 补充信息
+      description: 版本号、操作系统、截图等
