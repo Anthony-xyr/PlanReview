@@ -1,0 +1,50 @@
+# Windows 安装包配置。产物在 dist/ 下
+appId: com.planreview.app
+productName: 计划与复盘
+executableName: PlanReview
+copyright: 个人自用
+
+directories:
+  output: dist
+  buildResources: resources
+
+# 只打包运行需要的东西：构建产物、运行时依赖、图标
+files:
+  - out/**
+  - resources/**
+  - package.json
+  - '!**/*.map'
+  - '!**/{test,tests,__tests__,docs,doc,example,examples}/**'
+  - '!**/*.{md,markdown,ts,tsx,mts,cc,hh,inc,h,c,cpp}'
+  - '!**/CMakeLists.txt'
+
+# 图标要在 asar 外面，托盘和系统通知才能读到；koffi 的原生模块也必须在外面才能加载
+asarUnpack:
+  - resources/**
+  - node_modules/@koromix/koffi-win32-x64/**
+  - node_modules/koffi/**
+
+electronDownload:
+  mirror: https://npmmirror.com/mirrors/electron/
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: resources/icon.ico
+  artifactName: PlanReview-Setup-${version}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: 计划与复盘
+  installerIcon: resources/icon.ico
+  uninstallerIcon: resources/icon.ico
+  # 卸载时保留数据库（在 %APPDATA%\plan-review 下，主进程里固定了这个目录），重装后数据还在
+  deleteAppDataOnUninstall: false
+
+# 没有代码签名证书，跳过签名
+forceCodeSigning: false
