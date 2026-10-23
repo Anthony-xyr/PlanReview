@@ -43,7 +43,13 @@ async function readPdf(file: File): Promise<ImportFile[]> {
   const pdfjs = await import('pdfjs-dist')
   const worker = await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
   pdfjs.GlobalWorkerOptions.workerSrc = worker.default
-  const task = pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) })
+  const task = pdfjs.getDocument({
+    data: new Uint8Array(await file.arrayBuffer()),
+    cMapUrl: './cmaps/',
+    cMapPacked: true,
+    standardFontDataUrl: './standard_fonts/',
+    useWorkerFetch: false
+  })
   const doc = await task.promise
   try {
     const pages: string[] = []
