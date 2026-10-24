@@ -21,8 +21,8 @@ const iso = (d: number, h: number, m = 0) => local(d, h, m).toISOString()
 beforeEach(() => {
   db = new DatabaseSync(':memory:')
   migrate(db)
-  repo = new Repo(db)
   clock = local(18, 22) // 周日晚上
+  repo = new Repo(db, () => clock)
   time = new TimeRepo(db, () => clock)
   weekly = new WeeklyRepo(db, repo, time, () => clock)
 })

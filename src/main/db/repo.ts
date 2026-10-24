@@ -79,7 +79,11 @@ const COLUMNS: Record<Exclude<keyof TaskInput, 'tags'>, string> = {
 }
 
 export class Repo {
-  constructor(private db: DatabaseSync) {}
+  /** now 可注入，方便测试 */
+  constructor(
+    private db: DatabaseSync,
+    private now: () => Date = () => new Date()
+  ) {}
 
   private tx<T>(fn: () => T): T {
     this.db.exec('BEGIN')
@@ -139,7 +143,7 @@ export class Repo {
     const title = input.title?.trim()
     if (!title) throw new Error('标题不能为空')
     const id = crypto.randomUUID()
-    const now = new Date().toISOString()
+    const now = this.now().toISOString()
 
     this.tx(() => {
       this.db
@@ -186,12 +190,12 @@ export class Repo {
     // 完成时间随状态变化
     if (patch.status !== undefined && patch.status !== existing.status) {
       sets.push('completed_at = ?')
-      params.push(patch.status === 'done' ? new Date().toISOString() : null)
+      params.push(patch.status === 'done' ? this.now().toISOString() : null)
     }
 
     this.tx(() => {
       sets.push('updated_at = ?')
-      params.push(new Date().toISOString())
+      params.push(this.now().toISOString())
       this.db.prepare(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`).run(...params, id)
       if (patch.tags !== undefined) this.setTags(id, patch.tags)
     })
@@ -295,7 +299,7 @@ export class Repo {
     }
     this.db
       .prepare('INSERT INTO categories (id, name, color, sort, updated_at) VALUES (?, ?, ?, ?, ?)')
-      .run(id, trimmed, color, next, new Date().toISOString())
+      .run(id, trimmed, color, next, this.now().toISOString())
     return this.getCategory(id)!
   }
 
@@ -316,7 +320,7 @@ export class Repo {
     if (patch.sort !== undefined) sets.push('sort = ?'), params.push(patch.sort)
     if (patch.archived !== undefined) sets.push('archived = ?'), params.push(patch.archived ? 1 : 0)
     sets.push('updated_at = ?')
-    params.push(new Date().toISOString())
+    params.push(this.now().toISOString())
     this.db.prepare(`UPDATE categories SET ${sets.join(', ')} WHERE id = ?`).run(...params, id)
     return this.getCategory(id)!
   }
@@ -331,7 +335,7 @@ export class Repo {
       const to = this.getCategory(moveOpenTo)
       if (!to || to.archived || to.id === id) throw new Error('要改到的类别不存在')
     }
-    const now = new Date().toISOString()
+    const now = this.now().toISOString()
     return this.tx(() => {
       if (moveOpenTo !== undefined)
         this.db
@@ -348,7 +352,7 @@ export class Repo {
     const known = new Set(all.map((c) => c.id))
     if (ids.some((id) => !known.has(id))) throw new Error('类别不存在')
     const order = [...ids, ...all.map((c) => c.id).filter((id) => !ids.includes(id))]
-    const now = new Date().toISOString()
+    const now = this.now().toISOString()
     const update = this.db.prepare('UPDATE categories SET sort = ?, updated_at = ? WHERE id = ?')
     this.tx(() => order.forEach((id, i) => update.run(i, now, id)))
   }
