@@ -93,8 +93,8 @@ export function sanitizeSchedule(raw: unknown): ScheduleDraft {
   return { termStart: /^\d{4}-\d{2}-\d{2}$/.test(ts) ? ts : '', courses, notes }
 }
 
-export async function parseSchedule(ep: AiEndpoint, files: ImportFile[], hint: string): Promise<ScheduleDraft> {
+export async function parseSchedule(ep: AiEndpoint, files: ImportFile[], hint: string, reasoningEffort: 'low' | 'medium' | 'high' = 'medium'): Promise<ScheduleDraft> {
   if (!files.length) throw new Error('请先选择文件')
-  const out = await chat(ep, scheduleMessages(files, hint), { json: !files.some((f) => f.kind === 'image'), timeoutMs: 180_000 })
+  const out = await chat(ep, scheduleMessages(files, hint), { json: !files.some((f) => f.kind === 'image'), timeoutMs: 180_000, reasoningEffort })
   return sanitizeSchedule(extractJson(out))
 }

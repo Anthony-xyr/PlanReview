@@ -28,13 +28,14 @@ export function normalizeBaseUrl(url: string): string {
 export async function chat(
   ep: AiEndpoint,
   messages: ChatMessage[],
-  opts: { json?: boolean; timeoutMs?: number; fetchImpl?: Fetch; temperature?: number } = {}
+  opts: { json?: boolean; timeoutMs?: number; fetchImpl?: Fetch; temperature?: number; reasoningEffort?: 'low' | 'medium' | 'high' } = {}
 ): Promise<string> {
   if (!ep.baseUrl) throw new AiError('还没有填写 AI 接口地址')
   if (!ep.model) throw new AiError('还没有填写模型名称')
   const url = `${normalizeBaseUrl(ep.baseUrl)}/chat/completions`
   const body: Record<string, unknown> = { model: ep.model, messages, temperature: opts.temperature ?? 0.1 }
   if (opts.json) body.response_format = { type: 'json_object' }
+  if (opts.reasoningEffort) body.reasoning_effort = opts.reasoningEffort
 
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? 60_000)

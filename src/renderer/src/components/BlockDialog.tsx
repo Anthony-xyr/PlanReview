@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Category, Task } from '@shared/types'
 import { Dialog, type Mutate } from '../ui'
 import { hhmm } from '@shared/time'
+import { CategorySelect } from './TaskDetail'
 
 export interface BlockDraft {
   kind: 'plan' | 'entry'
@@ -106,15 +107,8 @@ export function BlockDialog({ draft, tasks, categories, mutate, onClose }: Props
               <input autoFocus required value={title} onChange={(e) => setTitle(e.target.value)} placeholder={isPlan ? '如：打游戏、看番、吃饭' : '如：午饭、看番'} />
             </label>
             <label className="field">
-              <span>大类</span>
-              <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-                <option value="">未分类</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
+              <span>类别</span>
+              <CategorySelect categories={categories} value={categoryId || null} onChange={(id) => setCategoryId(id ?? '')} />
             </label>
           </div>
         )}

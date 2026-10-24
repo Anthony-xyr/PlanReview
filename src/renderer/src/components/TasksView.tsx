@@ -2,14 +2,16 @@ import { useEffect, useMemo, useState } from 'react'
 import type { Category, StartTimerInput, Task, TaskFilter, TaskInput, TimeEntry } from '@shared/types'
 import type { Mutate } from '../ui'
 import { formatMinutes, parseMinutes } from '@shared/format'
-import { TaskDetail } from './TaskDetail'
+import { CategorySelect, TaskDetail } from './TaskDetail'
 import { CaptureConfirm, useSmartCapture } from '../capture'
+import { CategoryDialog, CategoryTabs } from './CategoryManager'
 
 export type TaskViewKind =
   | { kind: 'inbox' }
   | { kind: 'active' }
   | { kind: 'done' }
-  | { kind: 'category'; id: string }
+  /** 类别页；id 为 null 时看未分类的 */
+  | { kind: 'category'; id: string | null }
   | { kind: 'tag'; tag: string }
 
 interface Props {
@@ -64,14 +66,14 @@ function pageInfo(view: TaskViewKind, categories: Category[]): PageInfo {
         placeholder: ''
       }
     case 'category': {
-      const c = categories.find((x) => x.id === view.id)
+      const c = view.id ? categories.find((x) => x.id === view.id) : undefined
       return {
-        title: c?.name ?? '大类',
-        intro: '这个大类下还没结束的任务。在这里添加的任务会自动归到这个大类。',
-        empty: '这个大类下还没有任务。',
+        title: '类别',
+        intro: '按类别查看还没结束的任务，点一项就能在右边修改。新任务请在收件箱或待办里记；AI 速记只会从现有类别里选。',
+        empty: view.id ? `「${c?.name ?? ''}」下没有还没结束的任务。` : '没有未分类的任务。',
         filter: { categoryId: view.id, status: ['inbox', 'active'] },
-        defaults: { categoryId: view.id, status: 'active' },
-        placeholder: `添加到「${c?.name ?? ''}」，回车保存`
+        defaults: {},
+        placeholder: ''
       }
     }
     case 'tag':
@@ -94,6 +96,10 @@ export function TasksView({ view, categories, version, mutate, running, onStartT
   const [search, setSearch] = useState('')
   const [text, setText] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [managing, setManaging] = useState<false | 'edit' | 'new'>(false)
+  const active = categories.filter((c) => !c.archived)
+  // 只在这一页才有的：类别页不新建任务
+  const canCapture = view.kind !== 'done' && view.kind !== 'category'
   const viewKey = JSON.stringify(view)
   const catById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories])
 
@@ -146,7 +152,7 @@ export function TasksView({ view, categories, version, mutate, running, onStartT
         const k = t.categoryId && catById.has(t.categoryId) ? t.categoryId : ''
         groups.set(k, [...(groups.get(k) ?? []), t])
       }
-      const order = [...categories.map((c) => c.id), ''].filter((k) => groups.has(k))
+      const order = [...active, ...categories.filter((c) => c.archived)].map((c) => c.id).concat('').filter((k) => groups.has(k))
       return order.map((k) => {
         const list = groups.get(k)!
         const c = catById.get(k)
@@ -191,7 +197,31 @@ export function TasksView({ view, categories, version, mutate, running, onStartT
       ))
     }
 
-    return <ul className="task-list">{tasks.map((t) => row(t, { showCat: view.kind !== 'category' }))}</ul>
+    if (view.kind === 'category') {
+      // 先看准备做的，再看还没整理的
+      const groups: [string, Task[]][] = [
+        ['待办', tasks.filter((t) => t.status === 'active')],
+        ['收件箱', tasks.filter((t) => t.status === 'inbox')]
+      ]
+      return groups
+        .filter(([, list]) => list.length)
+        .map(([label, list]) => {
+          const left = list.reduce((s, t) => s + remaining(t), 0)
+          return (
+            <section key={label} className="group">
+              <h3 className="group-head">
+                {label}
+                <span className="muted">
+                  {list.length} 项{left ? ` · 剩余约 ${formatMinutes(left)}` : ''}
+                </span>
+              </h3>
+              <ul className="task-list">{list.map((t) => row(t, { showCat: false }))}</ul>
+            </section>
+          )
+        })
+    }
+
+    return <ul className="task-list">{tasks.map((t) => row(t))}</ul>
   }
 
   const totalLeft = tasks.reduce((s, t) => s + remaining(t), 0)
@@ -201,10 +231,17 @@ export function TasksView({ view, categories, version, mutate, running, onStartT
     <div className="tasks-page">
       <main className="main">
         <header className="page-head stacked">
-          <h1>
-            {info.title}
-            <span className="sub">{tasks.length} 项</span>
-          </h1>
+          <div className="head-row">
+            <h1>
+              {info.title}
+              <span className="sub">{tasks.length} 项</span>
+            </h1>
+            {view.kind === 'category' && (
+              <button className="secondary" onClick={() => setManaging('edit')}>
+                管理类别
+              </button>
+            )}
+          </div>
           <p className="intro">{info.intro}</p>
           {view.kind !== 'done' && totalLeft > 0 && (
             <p className="summary">
@@ -214,7 +251,17 @@ export function TasksView({ view, categories, version, mutate, running, onStartT
           )}
         </header>
 
-        {view.kind !== 'done' && (
+        {view.kind === 'category' && (
+          <CategoryTabs
+            categories={categories}
+            selected={view.id}
+            version={version}
+            onSelect={(id) => onNavigate({ kind: 'category', id })}
+            onCreate={() => setManaging('new')}
+          />
+        )}
+
+        {canCapture && (
           <form
             className="capture"
             onSubmit={(e) => {
@@ -241,7 +288,6 @@ export function TasksView({ view, categories, version, mutate, running, onStartT
             original={smart.pending.text}
             draft={smart.pending.draft}
             categories={categories}
-            lockCategory={view.kind === 'category'}
             onConfirm={smart.confirm}
             onKeepRaw={smart.keepRaw}
             onCancel={() => {
@@ -274,6 +320,20 @@ export function TasksView({ view, categories, version, mutate, running, onStartT
           version={version}
           running={running}
           onStartTimer={onStartTimer}
+        />
+      )}
+
+      {managing && (
+        <CategoryDialog
+          categories={categories}
+          version={version}
+          mutate={mutate}
+          focusNew={managing === 'new'}
+          onClose={() => setManaging(false)}
+          onRemoved={(id) => {
+            // 正在看的类别被删掉了，换到剩下的第一个
+            if (view.kind === 'category' && view.id === id) onNavigate({ kind: 'category', id: active.find((c) => c.id !== id)?.id ?? null })
+          }}
         />
       )}
     </div>
@@ -338,14 +398,7 @@ function TaskRow({ task: t, category, categories, selected, running, triage, sho
 
       {triage && (
         <div className="triage">
-          <select aria-label="大类" value={t.categoryId ?? ''} onChange={(e) => onUpdate({ categoryId: e.target.value || null })}>
-            <option value="">大类…</option>
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+          <CategorySelect aria-label="类别" emptyLabel="类别…" categories={categories} value={t.categoryId} onChange={(categoryId) => onUpdate({ categoryId })} />
           <input
             aria-label="估时"
             className="est"

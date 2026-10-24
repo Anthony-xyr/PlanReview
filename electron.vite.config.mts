@@ -9,6 +9,9 @@ export default defineConfig({
   preload: { resolve: { alias: shared } },
   renderer: {
     resolve: { alias: shared },
-    plugins: [react()]
+    plugins: [react()],
+    server: {
+      host: '127.0.0.1'
+    }
   }
 })

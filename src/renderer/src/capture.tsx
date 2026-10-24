@@ -95,7 +95,7 @@ export function CaptureConfirm({
   original: string
   draft: CaptureDraft
   categories: Category[]
-  /** 在大类页面里记的，大类固定 */
+  /** 在类别页面里记的，类别固定 */
   lockCategory?: boolean
   compact?: boolean
   onConfirm: (d: CaptureDraft) => void
@@ -132,7 +132,7 @@ export function CaptureConfirm({
       <div className="cc-grid">
         {!lockCategory && (
           <label className="field">
-            <span>大类</span>
+            <span>类别</span>
             <select value={d.categoryId ?? ''} onChange={(e) => set('categoryId', e.target.value || null)}>
               <option value="">未分类</option>
               {categories.filter((c) => !c.archived).map((c) => (

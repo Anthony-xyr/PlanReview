@@ -277,8 +277,11 @@ html.is-float, html.is-float body { background: transparent; overflow: hidden; }
 .float button.small { padding: 2px 10px; font-size: 12px; }
 .float-next { display: flex; gap: 6px; align-items: baseline; padding: 6px 12px; border-top: 1px solid var(--line-soft); }
 .float-next-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.float-capture { padding: 6px 8px 8px; border-top: 1px solid var(--line-soft); }
+.float-capture { padding: 6px 8px 8px; border-top: 1px solid var(--line-soft); opacity: 0; max-height: 0; overflow: hidden; transition: opacity 0.2s ease, max-height 0.2s ease, padding 0.2s ease; }
+.float-capture.is-expanded { opacity: 1; max-height: 100px; }
 .float-capture input { width: 100%; padding: 6px 8px; font-size: 13px; }
+.float-hint { padding: 8px 12px; border-top: 1px solid var(--line-soft); font-size: 12px; color: var(--muted); text-align: center; cursor: pointer; user-select: none; transition: color 0.15s ease, background 0.15s ease; }
+.float-hint:hover { color: var(--text); background: var(--panel-hover); }
 .float-flash { padding: 0 12px 8px; font-size: 12px; color: #166534; }
 .float-flash.is-error { color: var(--danger); }
 
@@ -472,3 +475,63 @@ html.is-float, html.is-float body { background: transparent; overflow: hidden; }
 .plan-time { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 92px; }
 .plan-title .badge { margin-left: 6px; }
 .plan-list .sug-evidence { margin-left: 24px; }
+
+/* ---------- 类别 ---------- */
+
+.head-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.cat-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 14px; }
+.cat-tab {
+  display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px; border-radius: 16px;
+  background: var(--panel); color: var(--text); border: 1px solid var(--line);
+}
+.cat-tab:hover { border-color: #cfcabf; }
+.cat-tab.is-on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.cat-tab.is-deleted { color: var(--muted); border-style: dashed; }
+.cat-tab.is-add { color: var(--muted); border-style: dashed; }
+.cat-tab.is-add:hover { color: var(--accent); border-color: var(--accent); }
+.cat-tab-n { font-size: 11px; font-weight: normal; color: var(--muted); font-variant-numeric: tabular-nums; }
+.cat-tab.is-on .cat-tab-n { color: var(--accent); }
+.dot.is-empty { background: none; border: 1.5px solid #b9b3a6; }
+
+.dialog:has(.cat-manage) { width: 520px; max-height: 86vh; overflow-y: auto; }
+.cat-rows { list-style: none; padding: 0; margin: 0; border: 1px solid var(--line); border-radius: 8px; }
+.cat-row { border-bottom: 1px solid var(--line-soft); }
+.cat-row:last-child { border-bottom: 0; }
+.cat-row.is-removing { background: #fdf6f2; }
+.cat-row-main { display: flex; align-items: center; gap: 8px; padding: 6px 8px; }
+.cat-order { display: flex; gap: 2px; }
+.cat-order button { padding: 1px 7px; font-size: 12px; }
+.cat-name { flex: 1; min-width: 0; border-color: transparent; background: transparent; }
+.cat-name:hover { border-color: var(--line); }
+.cat-name:focus { border-color: var(--accent); background: #fff; }
+.cat-open { font-size: 12px; color: var(--muted); min-width: 36px; text-align: right; font-variant-numeric: tabular-nums; }
+button.link.cat-del { color: var(--muted); }
+button.link.cat-del:hover { color: var(--danger); }
+.cat-confirm { padding: 4px 12px 12px 12px; font-size: 13px; line-height: 1.6; }
+.cat-confirm p { margin: 0 0 8px; color: var(--muted); }
+.cat-confirm fieldset { border: 0; padding: 0; margin: 0 0 10px; display: flex; flex-direction: column; gap: 6px; }
+.cat-confirm legend { padding: 0; margin-bottom: 4px; font-weight: 600; }
+.cat-confirm select { padding: 2px 6px; }
+.cat-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.cat-new { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.cat-new input { flex: 1; min-width: 0; }
+.cat-archived { margin-top: 14px; font-size: 13px; }
+.cat-archived summary { cursor: pointer; color: var(--muted); }
+.cat-archived ul { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-direction: column; gap: 4px; }
+.cat-archived li { display: flex; align-items: center; gap: 8px; padding: 3px 8px; }
+.cat-archived-name { flex: 1; color: var(--muted); }
+
+.color-pick { position: relative; display: inline-flex; }
+.swatch { width: 22px; height: 22px; padding: 0; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px var(--line); flex-shrink: 0; }
+.swatch:hover { box-shadow: 0 0 0 1px #9c968a; }
+.swatch.is-on { box-shadow: 0 0 0 2px var(--text); }
+.color-pop {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 5; display: grid; grid-template-columns: repeat(4, 22px); gap: 8px;
+  padding: 10px; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.14);
+}
+
+.cat-new .color-pop { top: auto; bottom: calc(100% + 6px); }
+
+/* AI 设置里的推理强度 */
+.settings-sub { font-size: 13px; margin: 18px 0 2px; }
+.effort-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; margin-top: 8px; }

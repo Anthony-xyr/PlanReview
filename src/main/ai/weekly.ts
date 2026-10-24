@@ -169,8 +169,8 @@ export function sanitizeWeekly(raw: unknown, openTaskIds: Set<string>): { report
   }
 }
 
-export async function generateWeekly(ep: AiEndpoint, c: WeekContext) {
-  const out = await chat(ep, weeklyMessages(weekContextText(c)), { json: true, timeoutMs: 120_000, temperature: 0.3 })
+export async function generateWeekly(ep: AiEndpoint, c: WeekContext, reasoningEffort: 'low' | 'medium' | 'high' = 'high') {
+  const out = await chat(ep, weeklyMessages(weekContextText(c)), { json: true, timeoutMs: 120_000, temperature: 0.3, reasoningEffort })
   return sanitizeWeekly(extractJson(out), new Set(c.openTasks.map((t) => t.id)))
 }
 
@@ -180,7 +180,8 @@ export async function askWeekly(
   context: string,
   report: WeeklyReport,
   history: { role: 'user' | 'assistant'; content: string }[],
-  question: string
+  question: string,
+  reasoningEffort: 'low' | 'medium' | 'high' = 'medium'
 ): Promise<string> {
   const system = `${WEEKLY_SYSTEM.split('只输出一个 JSON')[0]}
 现在用户在追问你之前写的周复盘。用中文直接回答，几句话即可，不要输出 JSON。回答要引用数据；数据里没有的就说不知道。
@@ -196,6 +197,6 @@ ${JSON.stringify({ summary: report.summary, wins: report.wins, patterns: report.
     ...history.slice(-12).map((m) => ({ role: m.role, content: m.content })),
     { role: 'user', content: question }
   ]
-  const out = await chat(ep, messages, { timeoutMs: 90_000, temperature: 0.4 })
+  const out = await chat(ep, messages, { timeoutMs: 90_000, temperature: 0.4, reasoningEffort })
   return out.trim().slice(0, 4000)
 }

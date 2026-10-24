@@ -23,7 +23,6 @@ export function App() {
   const [view, setView] = useState<View>({ kind: 'today' })
   const [version, setVersion] = useState(0)
   const [categories, setCategories] = useState<Category[]>([])
-  const [tags, setTags] = useState<string[]>([])
   const [inboxCount, setInboxCount] = useState(0)
   const [settings, setSettings] = useState<Settings | null>(null)
   const [running, setRunning] = useState<TimeEntry | null>(null)
@@ -47,15 +46,13 @@ export function App() {
 
   useEffect(() => {
     ;(async () => {
-      const [c, g, inbox, s, r] = await Promise.all([
+      const [c, inbox, s, r] = await Promise.all([
         window.api.categories.list(),
-        window.api.tags.list(),
         window.api.tasks.list({ status: 'inbox' }),
         window.api.settings.get(),
         window.api.entries.running()
       ])
       setCategories(c)
-      setTags(g)
       setInboxCount(inbox.length)
       setSettings(s)
       setRunning(r)
@@ -112,7 +109,8 @@ export function App() {
   )
 
   if (!settings) return null
-  const activeCategories = categories.filter((c) => !c.archived)
+  // 类别入口打开时停在第一个现有类别
+  const firstCategory = categories.find((c) => !c.archived)?.id ?? null
 
   return (
     <div className="app">
@@ -123,10 +121,18 @@ export function App() {
         {nav({ kind: 'active' }, '待办')}
         {nav({ kind: 'done' }, '已结束')}
         {nav({ kind: 'weekly' }, '周复盘')}
-        <div className="nav-heading">大类</div>
-        {activeCategories.map((c) => nav({ kind: 'category', id: c.id }, c.name, { color: c.color }))}
-        {tags.length > 0 && <div className="nav-heading">标签</div>}
-        {tags.map((t) => nav({ kind: 'tag', tag: t }, `#${t}`))}
+        <button
+          className={`nav-item ${view.kind === 'category' ? 'is-active' : ''}`}
+          aria-current={view.kind === 'category' ? 'page' : undefined}
+          onClick={async () => {
+            if (view.kind === 'category') return
+            // 停在第一个有没结束任务的类别，都没有就停在第一个
+            const counts = await window.api.categories.openCounts()
+            setView({ kind: 'category', id: categories.find((c) => !c.archived && counts[c.id])?.id ?? firstCategory })
+          }}
+        >
+          <span className="nav-label">类别</span>
+        </button>
         <div className="spacer" />
         <button className="nav-item" onClick={() => setReviewDay(dayOf(new Date(), settings.dayStartHour))}>
           今日复盘
@@ -139,6 +145,9 @@ export function App() {
         </button>
         <button className="nav-item" onClick={() => setWrapUp(true)}>
           收尾
+        </button>
+        <button className="nav-item" onClick={() => window.api.win.showFloat()}>
+          显示悬浮窗
         </button>
         <button className="nav-item" onClick={() => setShowSettings(true)}>
           设置
@@ -161,7 +170,7 @@ export function App() {
           <TodayView
             key={dayOf(new Date(), settings.dayStartHour)}
             settings={settings}
-            categories={activeCategories}
+            categories={categories}
             version={version}
             mutate={mutate}
             running={running}
@@ -174,7 +183,7 @@ export function App() {
         ) : (
           <TasksView
             view={view}
-            categories={activeCategories}
+            categories={categories}
             version={version}
             mutate={mutate}
             running={running}

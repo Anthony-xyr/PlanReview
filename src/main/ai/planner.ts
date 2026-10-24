@@ -104,8 +104,8 @@ export function sanitizePlan(raw: unknown, c: PlannerContext, dayStartHour: numb
   return { day: c.day, blocks: out.sort((a, b) => a.startAt.localeCompare(b.startAt)), notes }
 }
 
-export async function suggestPlan(ep: AiEndpoint, c: PlannerContext, dayStartHour: number): Promise<PlanSuggestion> {
+export async function suggestPlan(ep: AiEndpoint, c: PlannerContext, dayStartHour: number, reasoningEffort: 'low' | 'medium' | 'high' = 'low'): Promise<PlanSuggestion> {
   if (!c.gaps.length) return { day: c.day, blocks: [], notes: ['今天剩下的时间里没有空档了'] }
-  const out = await chat(ep, plannerMessages(c), { json: true, timeoutMs: 90_000, temperature: 0.3 })
+  const out = await chat(ep, plannerMessages(c), { json: true, timeoutMs: 90_000, temperature: 0.3, reasoningEffort })
   return sanitizePlan(extractJson(out), c, dayStartHour)
 }

@@ -60,7 +60,7 @@ export function sanitizeCapture(raw: unknown, original: string, categories: Cate
   }
 }
 
-export async function parseCapture(ep: AiEndpoint, text: string, categories: Category[], tags: string[], now = new Date()): Promise<CaptureDraft> {
-  const out = await chat(ep, captureMessages(text, categories, tags, now), { json: true, timeoutMs: 30_000 })
+export async function parseCapture(ep: AiEndpoint, text: string, categories: Category[], tags: string[], now = new Date(), reasoningEffort: 'low' | 'medium' | 'high' = 'medium'): Promise<CaptureDraft> {
+  const out = await chat(ep, captureMessages(text, categories, tags, now), { json: true, timeoutMs: 60_000, reasoningEffort })
   return sanitizeCapture(extractJson(out), text, categories, tags)
 }

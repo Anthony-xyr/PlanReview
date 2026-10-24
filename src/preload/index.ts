@@ -27,7 +27,10 @@ const api: Api & { onFocusCapture(cb: () => void): () => void } = {
   categories: {
     list: call('categories:list'),
     create: call('categories:create'),
-    update: call('categories:update')
+    update: call('categories:update'),
+    remove: call('categories:remove'),
+    reorder: call('categories:reorder'),
+    openCounts: call('categories:openCounts')
   } as Api['categories'],
   tags: { list: call('tags:list') } as Api['tags'],
   plan: {
@@ -61,6 +64,7 @@ const api: Api & { onFocusCapture(cb: () => void): () => void } = {
   },
   win: {
     openMain: call('win:openMain'),
+    showFloat: call('win:showFloat'),
     hideFloat: call('win:hideFloat'),
     resizeFloat: call('win:resizeFloat'),
     status: call('win:status')

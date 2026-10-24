@@ -91,7 +91,7 @@ function weekContext(weekStart: string): WeekContext {
 
 async function generateWeeklyReview(weekStart: string) {
   const ep = aiConfig.endpoint()
-  const { report, insights } = await generateWeekly(ep, weekContext(weekStart))
+  const { report, insights } = await generateWeekly(ep, weekContext(weekStart), aiConfig.effort('weeklyReview'))
   return weekly.saveReport(weekStart, report, ep.model, insights)
 }
 
@@ -101,7 +101,7 @@ async function askWeeklyReview(weekStart: string, question: string) {
   if (q.length > 1000) throw new Error('问题太长了')
   const r = weekly.get(weekStart)
   if (!r?.report) throw new Error('先生成这一周的复盘')
-  const answer = await askWeekly(aiConfig.endpoint(), weekContextText(weekContext(weekStart)), r.report, r.messages, q)
+  const answer = await askWeekly(aiConfig.endpoint(), weekContextText(weekContext(weekStart)), r.report, r.messages, q, aiConfig.effort('weeklyQA'))
   // 先拿到回答再写入，失败时不留半截对话
   weekly.addMessage(weekStart, 'user', q)
   return weekly.addMessage(weekStart, 'assistant', answer)
@@ -130,7 +130,8 @@ async function suggestDayPlan(day: string, hint: string) {
       insights: weekly.acceptedInsights(),
       hint
     },
-    cfg.dayStartHour
+    cfg.dayStartHour,
+    aiConfig.effort('planner')
   )
 }
 
@@ -198,6 +199,9 @@ function registerIpc(): void {
     'categories:list': () => repo.listCategories(),
     'categories:create': (name: string, color: string) => repo.createCategory(name, color),
     'categories:update': (id: string, patch) => repo.updateCategory(id, patch),
+    'categories:remove': (id: string, moveOpenTo?: string | null) => repo.removeCategory(id, moveOpenTo),
+    'categories:reorder': (ids: string[]) => repo.reorderCategories(ids),
+    'categories:openCounts': () => repo.openCountByCategory(),
     'tags:list': () => repo.listTags(),
     'plan:list': (from: string, to: string) => time.listBlocks(from, to),
     'plan:create': (input) => time.createBlock(input),
@@ -222,9 +226,10 @@ function registerIpc(): void {
     'ai:getConfig': () => aiConfig.view(),
     'ai:setConfig': (patch: AiConfigPatch) => aiConfig.update(patch),
     'ai:test': () => testAi(),
-    'ai:parseCapture': (text: string) => parseCapture(aiConfig.endpoint(), text, repo.listCategories(), repo.listTags()),
+    'ai:parseCapture': (text: string) =>
+      parseCapture(aiConfig.endpoint(), text, repo.listCategories(), repo.listTags(), new Date(), aiConfig.effort('capture')),
     'ai:parseSchedule': (files: ImportFile[], hint: string) =>
-      parseSchedule(aiConfig.endpoint(files.some((f) => f.kind === 'image')), files, hint),
+      parseSchedule(aiConfig.endpoint(files.some((f) => f.kind === 'image')), files, hint, aiConfig.effort('schedule')),
     'courses:list': () => courses.list(),
     'courses:commit': (draft: ScheduleDraft, replace: boolean) => courses.commit(draft, replace),
     'courses:removeAll': () => courses.removeAll(),
@@ -249,6 +254,10 @@ function registerIpc(): void {
     'reminders:dismiss': (id: string, scope?: 'once' | 'group') => center.dismiss(id, scope),
     'reminders:snooze': (id: string, min: number) => center.snooze(id, min, new Date()),
     'win:openMain': (cmd?: MainCommand) => (cmd ? sendCommand(cmd) : showMain()),
+    'win:showFloat': () => {
+      floatHiddenByUser = false
+      updateFloatVisibility()
+    },
     'win:hideFloat': () => {
       floatHiddenByUser = true
       updateFloatVisibility()
@@ -277,9 +286,38 @@ const webPreferences = (): Electron.WebPreferences => ({
   sandbox: true
 })
 
-function loadRenderer(win: BrowserWindow, hash = ''): void {
-  if (process.env.ELECTRON_RENDERER_URL) win.loadURL(process.env.ELECTRON_RENDERER_URL + hash)
-  else win.loadFile(join(__dirname, '../renderer/index.html'), { hash: hash.replace(/^#/, '') })
+async function waitForDevServer(url: string, maxRetries = 30): Promise<boolean> {
+  const http = await import('node:http')
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const req = http.get(url, (res) => {
+          res.resume()
+          resolve()
+        })
+        req.on('error', reject)
+        req.setTimeout(1000, () => {
+          req.destroy()
+          reject(new Error('timeout'))
+        })
+      })
+      return true
+    } catch {
+      await new Promise((r) => setTimeout(r, 200))
+    }
+  }
+  return false
+}
+
+async function loadRenderer(win: BrowserWindow, hash = ''): Promise<void> {
+  if (process.env.ELECTRON_RENDERER_URL) {
+    const url = process.env.ELECTRON_RENDERER_URL + hash
+    const ready = await waitForDevServer(process.env.ELECTRON_RENDERER_URL)
+    if (!ready) console.warn('Dev server not ready after 6s, loading anyway...')
+    await win.loadURL(url)
+  } else {
+    await win.loadFile(join(__dirname, '../renderer/index.html'), { hash: hash.replace(/^#/, '') })
+  }
 }
 
 function createMainWindow(): void {

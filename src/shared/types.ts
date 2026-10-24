@@ -231,9 +231,21 @@ export interface AiConfigView {
   keyEncrypted: boolean
   /** 速记时自动解析 */
   parseCapture: boolean
+  /** 各项 AI 任务的推理强度 */
+  reasoningEffort: Record<AiTask, ReasoningEffort>
 }
 
-export type AiConfigPatch = Partial<Omit<AiConfigView, 'hasKey' | 'keyEncrypted'>> & { apiKey?: string }
+/** 推理强度，对应 OpenAI 兼容接口的 reasoning_effort */
+export type ReasoningEffort = 'low' | 'medium' | 'high'
+export const REASONING_EFFORTS: ReasoningEffort[] = ['low', 'medium', 'high']
+
+/** 用到 AI 的场景 */
+export type AiTask = 'capture' | 'schedule' | 'planner' | 'weeklyReview' | 'weeklyQA'
+
+export type AiConfigPatch = Partial<Omit<AiConfigView, 'hasKey' | 'keyEncrypted' | 'reasoningEffort'>> & {
+  apiKey?: string
+  reasoningEffort?: Partial<Record<AiTask, ReasoningEffort>>
+}
 
 /** AI 从一句速记里拆出来的字段，确认后才写入 */
 export interface CaptureDraft {
@@ -454,7 +466,8 @@ export interface TaskInput {
 
 export interface TaskFilter {
   status?: TaskStatus | TaskStatus[]
-  categoryId?: string
+  /** null 表示未分类 */
+  categoryId?: string | null
   tag?: string
   search?: string
 }
@@ -478,6 +491,12 @@ export interface Api {
     list(): Promise<Category[]>
     create(name: string, color: string): Promise<Category>
     update(id: string, patch: Partial<Pick<Category, 'name' | 'color' | 'sort' | 'archived'>>): Promise<Category>
+    /** 删除（归档），旧任务保留它。moveOpenTo：没结束的任务改到这个类别，null 为未分类，不给则不改 */
+    remove(id: string, moveOpenTo?: string | null): Promise<Category>
+    /** 按给定顺序重排 */
+    reorder(ids: string[]): Promise<void>
+    /** 每个类别没结束的任务数，未分类的键为 '' */
+    openCounts(): Promise<Record<string, number>>
   }
   tags: {
     list(): Promise<string[]>
@@ -516,6 +535,7 @@ export interface Api {
   }
   win: {
     openMain(cmd?: MainCommand): Promise<void>
+    showFloat(): Promise<void>
     hideFloat(): Promise<void>
     resizeFloat(height: number): Promise<void>
     status(): Promise<SystemStatus>

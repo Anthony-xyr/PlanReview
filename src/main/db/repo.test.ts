@@ -108,4 +108,43 @@ describe('categories', () => {
     expect(u.name).toBe('学生会')
     expect(u.archived).toBe(true)
   })
+
+  it('现有类别不能重名，已删除的名字可以再用', () => {
+    const [study] = repo.listCategories()
+    expect(() => repo.createCategory('学习', '#000')).toThrow(/已经有/)
+    expect(() => repo.updateCategory(repo.listCategories()[1].id, { name: ' 学习 ' })).toThrow(/已经有/)
+    repo.removeCategory(study.id)
+    const again = repo.createCategory('学习', '#000')
+    // 旧的「学习」恢复时会撞名
+    expect(() => repo.updateCategory(study.id, { archived: false })).toThrow(/已经有/)
+    repo.removeCategory(again.id)
+    expect(repo.updateCategory(study.id, { archived: false }).archived).toBe(false)
+  })
+
+  it('删除：保留旧任务的类别，或把没结束的改走', () => {
+    const [a, b] = repo.listCategories()
+    const open = repo.createTask({ title: '没做完', categoryId: a.id, status: 'active' })
+    const done = repo.createTask({ title: '做完了', categoryId: a.id })
+    repo.updateTask(done.id, { status: 'done' })
+    expect(repo.openCountByCategory()[a.id]).toBe(1)
+
+    repo.removeCategory(a.id, b.id)
+    expect(repo.getTask(open.id)!.categoryId).toBe(b.id)
+    expect(repo.getTask(done.id)!.categoryId).toBe(a.id)
+    expect(repo.listCategories().find((c) => c.id === a.id)!.archived).toBe(true)
+
+    const c = repo.listCategories()[2]
+    const t = repo.createTask({ title: 'x', categoryId: c.id, status: 'inbox' })
+    repo.removeCategory(c.id, null)
+    expect(repo.getTask(t.id)!.categoryId).toBeNull()
+    expect(repo.listTasks({ categoryId: null }).map((x) => x.id)).toContain(t.id)
+    expect(() => repo.removeCategory(b.id, a.id)).toThrow(/不存在/)
+  })
+
+  it('重排：按给定顺序，没列出的排在后面', () => {
+    const ids = repo.listCategories().map((c) => c.id)
+    repo.reorderCategories([ids[3], ids[0]])
+    expect(repo.listCategories().map((c) => c.id)).toEqual([ids[3], ids[0], ids[1], ids[2], ids[4]])
+    expect(() => repo.reorderCategories(['nope'])).toThrow()
+  })
 })

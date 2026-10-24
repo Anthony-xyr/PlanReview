@@ -97,15 +97,8 @@ export function TaskDetail({ taskId, categories, onClose, onSelect, mutate, vers
 
       <div className="field-row">
         <label className="field">
-          <span>大类</span>
-          <select value={task.categoryId ?? ''} onChange={(e) => save({ categoryId: e.target.value || null })}>
-            <option value="">未分类</option>
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+          <span>类别</span>
+          <CategorySelect categories={categories} value={task.categoryId} onChange={(categoryId) => save({ categoryId })} />
         </label>
         <label className="field">
           <span>总估时</span>
@@ -221,6 +214,39 @@ export function TaskDetail({ taskId, categories, onClose, onSelect, mutate, vers
         删除任务
       </button>
     </aside>
+  )
+}
+
+/**
+ * 类别选择框：只列现有类别。任务当前的类别已被删除时，把它作为当前值留在列表里，
+ * 这样打开旧任务不会被悄悄改成未分类。
+ */
+export function CategorySelect({
+  categories,
+  value,
+  onChange,
+  emptyLabel = '未分类',
+  ...rest
+}: {
+  categories: Category[]
+  value: string | null
+  onChange: (id: string | null) => void
+  emptyLabel?: string
+  'aria-label'?: string
+}) {
+  const current = value ? categories.find((c) => c.id === value) : undefined
+  return (
+    <select {...rest} value={value ?? ''} onChange={(e) => onChange(e.target.value || null)}>
+      <option value="">{emptyLabel}</option>
+      {categories
+        .filter((c) => !c.archived)
+        .map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}
+          </option>
+        ))}
+      {current?.archived && <option value={current.id}>{current.name}（已删除）</option>}
+    </select>
   )
 }
 

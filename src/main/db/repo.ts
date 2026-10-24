@@ -109,7 +109,8 @@ export class Repo {
       where.push(`t.status IN (${statuses.map(() => '?').join(',')})`)
       params.push(...statuses)
     }
-    if (filter.categoryId) {
+    if (filter.categoryId === null) where.push('t.category_id IS NULL')
+    else if (filter.categoryId) {
       where.push('t.category_id = ?')
       params.push(filter.categoryId)
     }
@@ -286,6 +287,8 @@ export class Repo {
   createCategory(name: string, color: string): Category {
     const trimmed = name.trim()
     if (!trimmed) throw new Error('名称不能为空')
+    if (trimmed.length > 20) throw new Error('名称最多 20 个字')
+    this.assertUniqueName(trimmed)
     const id = crypto.randomUUID()
     const { next } = this.db.prepare('SELECT COALESCE(MAX(sort), -1) + 1 AS next FROM categories').get() as {
       next: number
@@ -297,11 +300,15 @@ export class Repo {
   }
 
   updateCategory(id: string, patch: Partial<Pick<Category, 'name' | 'color' | 'sort' | 'archived'>>): Category {
-    if (!this.getCategory(id)) throw new Error('分类不存在')
+    const cur = this.getCategory(id)
+    if (!cur) throw new Error('类别不存在')
+    const archived = patch.archived ?? cur.archived
+    if (!archived && (patch.name !== undefined || patch.archived === false)) this.assertUniqueName(patch.name?.trim() || cur.name, id)
     const sets: string[] = []
     const params: SQLInputValue[] = []
     if (patch.name !== undefined) {
       if (!patch.name.trim()) throw new Error('名称不能为空')
+      if (patch.name.trim().length > 20) throw new Error('名称最多 20 个字')
       sets.push('name = ?')
       params.push(patch.name.trim())
     }
@@ -312,6 +319,52 @@ export class Repo {
     params.push(new Date().toISOString())
     this.db.prepare(`UPDATE categories SET ${sets.join(', ')} WHERE id = ?`).run(...params, id)
     return this.getCategory(id)!
+  }
+
+  /**
+   * 删除类别：只归档不删行，已有任务、计划、记录继续显示它，之后不能再选。
+   * moveOpenTo 给了类别 id 就把还没结束的任务改过去，给 null 改成未分类，不给则保留原类别。
+   */
+  removeCategory(id: string, moveOpenTo?: string | null): Category {
+    if (!this.getCategory(id)) throw new Error('类别不存在')
+    if (moveOpenTo) {
+      const to = this.getCategory(moveOpenTo)
+      if (!to || to.archived || to.id === id) throw new Error('要改到的类别不存在')
+    }
+    const now = new Date().toISOString()
+    return this.tx(() => {
+      if (moveOpenTo !== undefined)
+        this.db
+          .prepare("UPDATE tasks SET category_id = ?, updated_at = ? WHERE category_id = ? AND status IN ('inbox', 'active')")
+          .run(moveOpenTo, now, id)
+      this.db.prepare('UPDATE categories SET archived = 1, updated_at = ? WHERE id = ?').run(now, id)
+      return this.getCategory(id)!
+    })
+  }
+
+  /** 按 ids 的顺序重排；没列出的（如已删除的）排在后面，保持原有先后 */
+  reorderCategories(ids: string[]): void {
+    const all = this.listCategories()
+    const known = new Set(all.map((c) => c.id))
+    if (ids.some((id) => !known.has(id))) throw new Error('类别不存在')
+    const order = [...ids, ...all.map((c) => c.id).filter((id) => !ids.includes(id))]
+    const now = new Date().toISOString()
+    const update = this.db.prepare('UPDATE categories SET sort = ?, updated_at = ? WHERE id = ?')
+    this.tx(() => order.forEach((id, i) => update.run(i, now, id)))
+  }
+
+  /** 每个类别还没结束的任务数；未分类的键为 '' */
+  openCountByCategory(): Record<string, number> {
+    const rows = this.db
+      .prepare("SELECT COALESCE(category_id, '') AS id, COUNT(*) AS n FROM tasks WHERE status IN ('inbox', 'active') GROUP BY category_id")
+      .all() as { id: string; n: number }[]
+    return Object.fromEntries(rows.map((r) => [r.id, r.n]))
+  }
+
+  /** 没删除的类别里不能重名，否则 AI 按名称匹配时分不清 */
+  private assertUniqueName(name: string, exceptId = ''): void {
+    const dup = this.db.prepare('SELECT 1 FROM categories WHERE archived = 0 AND lower(name) = lower(?) AND id != ?').get(name, exceptId)
+    if (dup) throw new Error(`已经有叫「${name}」的类别了`)
   }
 
   private getCategory(id: string): Category | null {

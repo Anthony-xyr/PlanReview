@@ -20,6 +20,7 @@ export function FloatApp() {
   const [text, setText] = useState('')
   const [flash, setFlash] = useState<{ text: string; error?: boolean } | null>(null)
   const [, setTick] = useState(0)
+  const [captureExpanded, setCaptureExpanded] = useState(false)
   const reminder = useReminder()
   const rootRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -40,7 +41,10 @@ export function FloatApp() {
   useEffect(() => {
     load()
     const offData = window.api.events.onDataChanged(load)
-    const offFocus = window.api.onFocusCapture(() => inputRef.current?.focus())
+    const offFocus = window.api.onFocusCapture(() => {
+      setCaptureExpanded(true)
+      setTimeout(() => inputRef.current?.focus(), 50)
+    })
     const t = setInterval(() => setTick((n) => n + 1), 1000)
     const reload = setInterval(load, 60_000)
     return () => {
@@ -83,7 +87,16 @@ export function FloatApp() {
   })
 
   const capture = async () => {
-    if (await smart.submit(text)) setText('')
+    if (await smart.submit(text)) {
+      setText('')
+      setCaptureExpanded(false)
+    }
+  }
+
+  const closeCapture = () => {
+    setText('')
+    setCaptureExpanded(false)
+    inputRef.current?.blur()
   }
 
   const left = running ? remainingMin(running) : null
@@ -167,23 +180,29 @@ export function FloatApp() {
         </div>
       )}
 
-      <form
-        className="float-capture"
-        onSubmit={(e) => {
-          e.preventDefault()
-          capture()
-        }}
-      >
-        <input
-          ref={inputRef}
-          aria-label="速记"
-          placeholder={smart.busy ? 'AI 解析中…' : settings ? `速记，回车存进收件箱（${settings.hotkey}）` : '速记'}
-          value={text}
-          disabled={smart.busy}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => e.key === 'Escape' && (e.currentTarget.blur(), setText(''))}
-        />
-      </form>
+      {captureExpanded ? (
+        <form
+          className="float-capture is-expanded"
+          onSubmit={(e) => {
+            e.preventDefault()
+            capture()
+          }}
+        >
+          <input
+            ref={inputRef}
+            aria-label="速记"
+            placeholder={smart.busy ? 'AI 解析中…' : '输入内容后按回车保存'}
+            value={text}
+            disabled={smart.busy}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => e.key === 'Escape' && closeCapture()}
+          />
+        </form>
+      ) : (
+        <div className="float-hint" onClick={() => setCaptureExpanded(true)}>
+          按 {settings?.hotkey || 'Alt+Shift+Space'} 快速记录
+        </div>
+      )}
       {smart.pending && (
         <div className="float-confirm">
           <CaptureConfirm
