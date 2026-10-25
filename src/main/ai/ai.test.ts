@@ -1,11 +1,12 @@
 import { DatabaseSync } from 'node:sqlite'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { migrate } from '../db/schema'
 import { Repo } from '../db/repo'
 import { TimeRepo } from '../db/timeRepo'
 import { CourseRepo, meetingDate } from '../db/courseRepo'
 import { chat, extractJson, normalizeBaseUrl } from './client'
-import { captureMessages, sanitizeCapture } from './capture'
+import { captureMessages, parseCapture, reparseCapture, reparseMessages, sanitizeCapture, sanitizeReparse } from './capture'
+import { HabitRepo } from '../db/habitRepo'
 import { sanitizeSchedule, scheduleMessages } from './schedule'
 import { AiConfigStore, type SecretBox } from './config'
 
@@ -89,6 +90,109 @@ describe('capture', () => {
     expect(d.title).toBe('随便记一下')
     expect(d.categoryId).toBeNull()
     expect(d.estimateMin).toBeNull()
+  })
+})
+
+describe('capture habits', () => {
+  const draft = { title: '数电作业', categoryId: null, tags: [], estimateMin: null, dueDate: '2026-10-16', reviewDate: null, notes: '' }
+  /** 假接口：记下请求，按顺序回放回复 */
+  const fakeFetch = (...replies: unknown[]) => {
+    const bodies: { messages: { content: string }[]; reasoning_effort?: string }[] = []
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(init.body as string))
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(replies.shift()) } }] }))
+    }) as typeof fetch
+    return { bodies, fetchImpl }
+  }
+
+  it('启用的习惯按编号写进提示词，没有习惯时不提', () => {
+    const habits = new HabitRepo(db)
+    habits.add('句首的「月.日」是布置日期，不是截止')
+    const off = habits.add('不要的')
+    habits.update(off.id, { enabled: false })
+    const sys = captureMessages('10.16数电作业', repo.listCategories(), [], new Date(2026, 9, 24), habits.enabled())[0].content as string
+    expect(sys).toContain('h1：句首的「月.日」是布置日期')
+    expect(sys).not.toContain('不要的')
+    expect(sys).toContain('usedHabits')
+    expect(captureMessages('x', repo.listCategories(), [], new Date()).at(0)!.content).not.toContain('习惯')
+  })
+
+  it('纠正提示词带上原句、上一版（类别用名称）和全部纠正', () => {
+    const cat = repo.listCategories().find((c) => c.name === '课程作业')!
+    const [sys, user] = reparseMessages('10.16数电作业', { ...draft, categoryId: cat.id }, ['10.16 是布置日期', '放进备注'], repo.listCategories(), [], new Date(2026, 9, 24))
+    expect(sys.content).toContain('habit')
+    expect(user.content).toContain('原句：10.16数电作业')
+    expect(user.content).toContain('"category":"课程作业"')
+    expect(user.content).toContain('1. 10.16 是布置日期\n2. 放进备注')
+  })
+
+  it('清洗：编号换回 id，认不出的丢掉；没有习惯就不替换', () => {
+    const habits = new HabitRepo(db)
+    habits.add('a')
+    habits.add('b')
+    // 编号按传给 AI 的顺序：第 n 条是 hn
+    const list = habits.enabled()
+    const r = sanitizeReparse({ title: '数电作业', usedHabits: ['h2', 'H2', 'h9', 3], habit: '  句首日期  是布置日期 ', replaces: 'h1' }, '10.16数电作业', [], [], list)
+    expect(r.habitIds).toEqual([list[1].id])
+    expect(r.habit).toBe('句首日期 是布置日期')
+    expect(r.replacesId).toBe(list[0].id)
+    expect(sanitizeReparse({ habit: '', replaces: 'h1' }, 'x', [], [], list).replacesId).toBeNull()
+    expect(sanitizeReparse({ habit: 'x'.repeat(500) }, 'x', [], [], list).habit).toHaveLength(120)
+  })
+
+  it('解析和重新解析：习惯编号换回 id，带上推理强度', async () => {
+    const habits = new HabitRepo(db)
+    habits.add('句首日期是布置日期')
+    const id = habits.enabled()[0].id
+    const { bodies, fetchImpl } = fakeFetch(
+      { title: '数电作业', dueDate: null, notes: '10.16 布置', usedHabits: ['h1'] },
+      { title: '数电作业', dueDate: null, notes: '10.16 布置', habit: '句首「月.日」是布置日期，写进备注', replaces: 'h1' }
+    )
+    vi.stubGlobal('fetch', fetchImpl)
+    try {
+      const ep = { baseUrl: 'http://x', apiKey: '', model: 'm' }
+      const p = await parseCapture(ep, '10.16数电作业', [], [], new Date(2026, 9, 24), 'low', habits.enabled())
+      expect(p.draft).toMatchObject({ title: '数电作业', dueDate: null, notes: '10.16 布置' })
+      expect(p.habitIds).toEqual([id])
+      const r = await reparseCapture(ep, '10.16数电作业', draft, ['10.16 是布置日期'], [], [], new Date(2026, 9, 24), 'high', habits.enabled())
+      expect(r.habit).toBe('句首「月.日」是布置日期，写进备注')
+      expect(r.replacesId).toBe(id)
+      expect(bodies.map((x) => x.reasoning_effort)).toEqual(['low', 'high'])
+      expect(bodies[1].messages[1].content).toContain('1. 10.16 是布置日期')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
+describe('habit repo', () => {
+  it('新增、去重、替换保留使用次数、记使用', () => {
+    const habits = new HabitRepo(db)
+    const a = habits.add('  句首日期   是布置日期 ', '10.16数电作业')
+    expect(a.text).toBe('句首日期 是布置日期')
+    expect(a.example).toBe('10.16数电作业')
+    expect(habits.add('句首日期 是布置日期').id).toBe(a.id)
+    habits.markUsed([a.id, a.id])
+    const r = habits.add('句首「月.日」是布置日期，写进备注', '10.17电路实验', a.id)
+    expect(r.id).toBe(a.id)
+    expect(r.usedCount).toBe(1)
+    expect(r.lastUsedAt).not.toBeNull()
+    expect(habits.list()).toHaveLength(1)
+  })
+
+  it('停用的不发给 AI；校验长度和上限', () => {
+    const habits = new HabitRepo(db)
+    const a = habits.add('a')
+    habits.update(a.id, { enabled: false })
+    expect(habits.enabled()).toHaveLength(0)
+    // 文字相同时重新启用
+    expect(habits.add('a').enabled).toBe(true)
+    expect(() => habits.add('  ')).toThrow(/不能为空/)
+    expect(() => habits.add('x'.repeat(121))).toThrow(/最多/)
+    for (let i = 1; i < 30; i++) habits.add(`h${i}`)
+    expect(() => habits.add('第 31 条')).toThrow(/最多记 30 条/)
+    habits.remove(a.id)
+    expect(habits.add('第 31 条').text).toBe('第 31 条')
   })
 })
 

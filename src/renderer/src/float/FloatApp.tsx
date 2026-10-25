@@ -125,7 +125,7 @@ export function FloatApp() {
         />
       )}
 
-      {running ? (
+      {!smart.pending && (running ? (
         <div className="float-now">
           <div className="float-label">
             <span className="pulse" aria-hidden /> 正在进行
@@ -170,9 +170,9 @@ export function FloatApp() {
           <div className="float-label">现在没有在计时</div>
           {settings && <div className="muted">做完的事可以在「今天」的实际列里补录。</div>}
         </div>
-      )}
+      ))}
 
-      {next && (
+      {next && !smart.pending && (
         <div className="float-next">
           <span className="muted">下一件</span>
           <span className="float-next-title">{next.title}</span>
@@ -199,20 +199,19 @@ export function FloatApp() {
           />
         </form>
       ) : (
-        <div className="float-hint" onClick={() => setCaptureExpanded(true)}>
-          按 {settings?.hotkey || 'Alt+Shift+Space'} 快速记录
-        </div>
+        !smart.pending && (
+          <div className="float-hint" onClick={() => setCaptureExpanded(true)}>
+            按 {settings?.hotkey || 'Alt+Shift+Space'} 快速记录
+          </div>
+        )
       )}
       {smart.pending && (
         <div className="float-confirm">
           <CaptureConfirm
             compact
             key={smart.pending.text}
-            original={smart.pending.text}
-            draft={smart.pending.draft}
+            smart={smart}
             categories={categories}
-            onConfirm={smart.confirm}
-            onKeepRaw={smart.keepRaw}
             onCancel={() => {
               setText(smart.pending!.text)
               smart.cancel()

@@ -285,11 +285,8 @@ export function TasksView({ view, categories, version, mutate, running, onStartT
         {smart.pending && (
           <CaptureConfirm
             key={smart.pending.text}
-            original={smart.pending.text}
-            draft={smart.pending.draft}
+            smart={smart}
             categories={categories}
-            onConfirm={smart.confirm}
-            onKeepRaw={smart.keepRaw}
             onCancel={() => {
               setText(smart.pending!.text)
               smart.cancel()

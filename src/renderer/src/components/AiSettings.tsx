@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { AiConfigView, AiTask, ReasoningEffort } from '@shared/types'
 import { REASONING_EFFORTS } from '@shared/types'
 import { errorText } from '../ui'
+import { HabitsDialog } from './HabitsDialog'
 
 /** 常见服务的接口地址，选了自动填 */
 const PRESETS: { name: string; baseUrl: string; model: string; vision?: string }[] = [
@@ -36,8 +37,12 @@ export function AiSettings() {
   const [key, setKey] = useState('')
   const [status, setStatus] = useState<{ text: string; error?: boolean } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [showHabits, setShowHabits] = useState(false)
+  const [habitCount, setHabitCount] = useState<number | null>(null)
+  const loadHabitCount = () => window.api.habits.list().then((l) => setHabitCount(l.filter((h) => h.enabled).length))
 
   useEffect(() => {
+    loadHabitCount()
     window.api.ai.getConfig().then((c) => {
       setCfg(c)
       setForm({ baseUrl: c.baseUrl, model: c.model, visionModel: c.visionModel, reasoningEffort: c.reasoningEffort })
@@ -69,7 +74,7 @@ export function AiSettings() {
     <section className="settings-section">
       <h3>AI</h3>
       <p className="muted">
-        这一栏单独保存。支持所有兼容 OpenAI 格式的服务。速记解析、课表导入时，相关文字和图片会发给你配置的服务商；数据本身只存在本机。
+        这一栏单独保存。支持所有兼容 OpenAI 格式的服务。速记解析、课表导入、排时间、周复盘时，相关文字和图片会发给你配置的服务商；数据本身只存在本机。
       </p>
       <label className="check">
         <input type="checkbox" checked={cfg.enabled} onChange={(e) => run(async () => (await save({ enabled: e.target.checked })).enabled ? '已开启 AI' : '已关闭 AI，不会再发送任何内容')} />
@@ -133,8 +138,17 @@ export function AiSettings() {
 
           <label className="check">
             <input type="checkbox" checked={cfg.parseCapture} onChange={(e) => run(async () => ((await save({ parseCapture: e.target.checked })).parseCapture ? '速记会先交给 AI 拆分' : '速记直接存原文'))} />
-            速记时用 AI 拆出日期、估时、大类（确认后才保存）
+            速记时用 AI 拆出日期、估时、类别（确认后才保存）
           </label>
+          <div className="habit-entry">
+            <div>
+              <strong>速记习惯</strong>
+              <p className="muted">{habitCount ? `已记住 ${habitCount} 条，AI 拆速记时会照着理解你的写法` : '还没有。速记卡片上点「纠正」，确认后会记在这里'}</p>
+            </div>
+            <button type="button" className="secondary" onClick={() => setShowHabits(true)}>
+              查看和修改
+            </button>
+          </div>
           <div className="dialog-actions">
             {cfg.hasKey && (
               <button type="button" className="link" disabled={busy} onClick={() => run(async () => (await window.api.ai.setConfig({ apiKey: '' }), setCfg(await window.api.ai.getConfig()), '已删除 API Key'))}>
@@ -162,6 +176,14 @@ export function AiSettings() {
         </>
       )}
       {status && <p className={status.error ? 'form-error' : 'form-ok'} role="status">{status.text}</p>}
+      {showHabits && (
+        <HabitsDialog
+          onClose={() => {
+            setShowHabits(false)
+            loadHabitCount()
+          }}
+        />
+      )}
     </section>
   )
 }

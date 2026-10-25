@@ -151,6 +151,19 @@ const migrations: string[] = [
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
   );
+  `,
+  // 速记习惯：用户纠正 AI 解析后确认记下的，之后解析速记时参考
+  `
+  CREATE TABLE capture_habits (
+    id           TEXT PRIMARY KEY,
+    text         TEXT NOT NULL,
+    example      TEXT NOT NULL DEFAULT '',
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    used_count   INTEGER NOT NULL DEFAULT 0,
+    last_used_at TEXT,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+  );
   `
 ]
 

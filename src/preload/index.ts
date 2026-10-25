@@ -74,8 +74,16 @@ const api: Api & { onFocusCapture(cb: () => void): () => void } = {
     setConfig: call('ai:setConfig'),
     test: call('ai:test'),
     parseCapture: call('ai:parseCapture'),
+    reparseCapture: call('ai:reparseCapture'),
     parseSchedule: call('ai:parseSchedule')
   } as Api['ai'],
+  habits: {
+    list: call('habits:list'),
+    add: call('habits:add'),
+    update: call('habits:update'),
+    remove: call('habits:remove'),
+    markUsed: call('habits:markUsed')
+  } as Api['habits'],
   courses: {
     list: call('courses:list'),
     commit: call('courses:commit'),

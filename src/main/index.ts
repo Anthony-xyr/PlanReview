@@ -3,6 +3,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, Notification, safeStorage, screen, shell, Tray } from 'electron'
 import type {
   AiConfigPatch,
+  CaptureDraft,
   DailyReviewInput,
   ImportFile,
   MainCommand,
@@ -24,7 +25,8 @@ import { CourseRepo } from './db/courseRepo'
 import { AiConfigStore } from './ai/config'
 import { ReviewRepo } from './db/reviewRepo'
 import { chat } from './ai/client'
-import { parseCapture } from './ai/capture'
+import { parseCapture, reparseCapture } from './ai/capture'
+import { HabitRepo } from './db/habitRepo'
 import { parseSchedule } from './ai/schedule'
 import { WeeklyRepo } from './db/weeklyRepo'
 import { askWeekly, generateWeekly, weekContextText, type WeekContext } from './ai/weekly'
@@ -40,6 +42,7 @@ let courses: CourseRepo
 let aiConfig: AiConfigStore
 let review: ReviewRepo
 let weekly: WeeklyRepo
+let habits: HabitRepo
 let mainWin: BrowserWindow | null = null
 let floatWin: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -62,6 +65,7 @@ function openDatabase(): void {
   courses = new CourseRepo(db)
   review = new ReviewRepo(db, repo, time)
   weekly = new WeeklyRepo(db, repo, time)
+  habits = new HabitRepo(db)
   aiConfig = new AiConfigStore(db, {
     available: () => safeStorage.isEncryptionAvailable(),
     encrypt: (s) => safeStorage.encryptString(s).toString('base64'),
@@ -180,7 +184,7 @@ function sendCommand(cmd: MainCommand): void {
 const READ_ONLY = new Set([
   'tasks:list', 'tasks:get', 'tasks:lineage', 'categories:list', 'tags:list', 'plan:list',
   'entries:list', 'entries:running', 'settings:get', 'reminders:current', 'win:status',
-  'ai:getConfig', 'ai:test', 'ai:parseCapture', 'ai:parseSchedule', 'courses:list',
+  'ai:getConfig', 'ai:test', 'ai:parseCapture', 'ai:reparseCapture', 'ai:parseSchedule', 'courses:list', 'habits:list',
   // 首次调用会定下当天的随机推送，但界面上没有可见变化
   'resurface:get', 'review:summary',
   'weekly:stats', 'weekly:get', 'insights:list', 'planner:suggest'
@@ -227,7 +231,17 @@ function registerIpc(): void {
     'ai:setConfig': (patch: AiConfigPatch) => aiConfig.update(patch),
     'ai:test': () => testAi(),
     'ai:parseCapture': (text: string) =>
-      parseCapture(aiConfig.endpoint(), text, repo.listCategories(), repo.listTags(), new Date(), aiConfig.effort('capture')),
+      parseCapture(aiConfig.endpoint(), text, repo.listCategories(), repo.listTags(), new Date(), aiConfig.effort('capture'), habits.enabled()),
+    'ai:reparseCapture': (text: string, previous: CaptureDraft, feedback: string[]) => {
+      const notes = (Array.isArray(feedback) ? feedback : []).map((f) => String(f).trim().slice(0, 300)).filter(Boolean).slice(-5)
+      if (!notes.length) throw new Error('写一句哪里不对')
+      return reparseCapture(aiConfig.endpoint(), text, previous, notes, repo.listCategories(), repo.listTags(), new Date(), aiConfig.effort('capture'), habits.enabled())
+    },
+    'habits:list': () => habits.list(),
+    'habits:add': (text: string, example?: string, replacesId?: string | null) => habits.add(text, example, replacesId ?? null),
+    'habits:update': (id: string, patch: { text?: string; enabled?: boolean }) => habits.update(id, patch),
+    'habits:remove': (id: string) => habits.remove(id),
+    'habits:markUsed': (ids: string[]) => habits.markUsed(Array.isArray(ids) ? ids : []),
     'ai:parseSchedule': (files: ImportFile[], hint: string) =>
       parseSchedule(aiConfig.endpoint(files.some((f) => f.kind === 'image')), files, hint, aiConfig.effort('schedule')),
     'courses:list': () => courses.list(),
@@ -265,7 +279,12 @@ function registerIpc(): void {
     'win:resizeFloat': (height: number) => {
       if (!floatWin || floatWin.isDestroyed()) return
       const [w] = floatWin.getSize()
-      floatWin.setSize(w, Math.max(60, Math.min(600, Math.round(height))))
+      const h = Math.max(60, Math.min(600, Math.round(height)))
+      // 不可调大小的透明窗口在 Windows 上 setSize 只会变高、不会变矮，改用 setBounds 并放开最小尺寸
+      const b = floatWin.getBounds()
+      if (b.height === h) return
+      floatWin.setMinimumSize(w, 60)
+      floatWin.setBounds({ x: b.x, y: b.y, width: w, height: h })
     },
     'win:status': (): SystemStatus => ({ hotkeyRegistered, fullscreenDetection: isFullscreenAppActive() !== null })
   }

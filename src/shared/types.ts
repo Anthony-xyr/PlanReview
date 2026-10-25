@@ -258,6 +258,37 @@ export interface CaptureDraft {
   notes: string
 }
 
+/** 速记解析的结果；habitIds 是这次 AI 说用到的习惯 */
+export interface CaptureParse {
+  draft: CaptureDraft
+  habitIds: string[]
+}
+
+/** 用户纠正后重新解析：新结果 + AI 概括出的一条习惯（确认保存时才记下） */
+export interface CaptureReparse extends CaptureParse {
+  /** 空字符串表示这次纠正不值得记成习惯 */
+  habit: string
+  /** 这条新习惯会替换掉的旧习惯 */
+  replacesId: string | null
+}
+
+/** 用户的速记习惯：AI 解析速记时参考，用户确认后才会记下 */
+export interface CaptureHabit {
+  id: string
+  text: string
+  /** 记下这条习惯时的那句速记 */
+  example: string
+  enabled: boolean
+  /** AI 报告用到它的次数 */
+  usedCount: number
+  lastUsedAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export const MAX_HABITS = 30
+export const MAX_HABIT_CHARS = 120
+
 /** 课表导入时上传的文件，已在界面里读成文本或图片 */
 export interface ImportFile {
   name: string
@@ -549,8 +580,19 @@ export interface Api {
     /** apiKey：undefined 不改，'' 清除 */
     setConfig(patch: AiConfigPatch): Promise<AiConfigView>
     test(): Promise<{ ok: true; model: string; ms: number }>
-    parseCapture(text: string): Promise<CaptureDraft>
+    parseCapture(text: string): Promise<CaptureParse>
+    /** 纠正后重新解析；feedback 是这句速记历次的纠正说明，最新的在最后 */
+    reparseCapture(text: string, previous: CaptureDraft, feedback: string[]): Promise<CaptureReparse>
     parseSchedule(files: ImportFile[], hint: string): Promise<ScheduleDraft>
+  }
+  habits: {
+    list(): Promise<CaptureHabit[]>
+    /** 记下一条习惯；replacesId 给了就改写那一条 */
+    add(text: string, example?: string, replacesId?: string | null): Promise<CaptureHabit>
+    update(id: string, patch: { text?: string; enabled?: boolean }): Promise<CaptureHabit>
+    remove(id: string): Promise<void>
+    /** 确认保存速记后，记一次这些习惯的使用 */
+    markUsed(ids: string[]): Promise<void>
   }
   courses: {
     list(): Promise<Course[]>
