@@ -35,7 +35,14 @@ export function Dialog({ title, onClose, children }: { title: string; onClose: (
         e.preventDefault()
         onClose()
       }}
-      onMouseDown={(e) => e.target === ref.current && onClose()}
+      onMouseDown={(e) => {
+        // 点遮罩才关闭。点对话框自己的滚动条或内边距时，事件目标也是 <dialog>，
+        // 所以要看点的位置在不在对话框的矩形外面
+        const d = ref.current
+        if (e.target !== d || !d) return
+        const r = d.getBoundingClientRect()
+        if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) onClose()
+      }}
     >
       <h2>{title}</h2>
       {children}
