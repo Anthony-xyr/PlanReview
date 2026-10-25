@@ -118,11 +118,11 @@ export function DailyReviewDialog({ day, categories, mutate, onClose, onSwitchDa
           </div>
 
           {s.byCategory.length > 0 && (
-            <ul className="dr-cats" aria-label="按大类">
+            <ul className="dr-cats" aria-label="按类别">
               {s.byCategory.map((c) => {
                 const cat = c.categoryId ? catById.get(c.categoryId) : undefined
                 return (
-                  <li key={c.categoryId ?? 'none'} style={{ ['--c' as string]: cat?.color ?? '#8a8478' }}>
+                  <li key={c.categoryId ?? 'none'} style={{ ['--c' as string]: cat?.color ?? 'var(--faint)' }}>
                     <span className="dr-cat-name">{cat?.name ?? '未分类'}</span>
                     <span className="dr-bars" aria-hidden>
                       <span className="dr-bar plan" style={{ width: `${(c.plannedMin / maxBar) * 100}%` }} />

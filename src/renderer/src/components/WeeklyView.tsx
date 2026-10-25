@@ -17,7 +17,7 @@ interface Props {
 
 const WD = '一二三四五六日'
 const fm = (m: number) => formatMinutes(Math.round(m)) || '0m'
-const NONE_COLOR = '#898781'
+const NONE_COLOR = 'var(--faint)'
 
 export function mondayOf(day: string): string {
   const [y, m, d] = day.split('-').map(Number)

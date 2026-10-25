@@ -148,7 +148,11 @@ export interface Settings {
   inboxNagDays: number
   /** 每周哪天提醒整理（0=周日 … 6=周六） */
   weeklyReviewDay: number
+  /** 外观：跟随系统、浅色、深色 */
+  theme: ThemeMode
 }
+
+export type ThemeMode = 'system' | 'light' | 'dark'
 
 // ---------- 找回 ----------
 

@@ -8,8 +8,9 @@ import { formatMinutes } from '@shared/format'
  */
 
 const fm = (m: number) => formatMinutes(Math.round(m)) || '0m'
-const GRID = '#e1e0d9'
-const AXIS = '#c3c2b7'
+// 跟着深浅色走：用 CSS 变量
+const GRID = 'var(--chart-grid)'
+const AXIS = 'var(--chart-axis)'
 
 /** 容器宽度，跟着窗口变化 */
 function useWidth(initial: number) {
@@ -126,7 +127,7 @@ export function StackedDays({ days, series, height = 200 }: { days: StackedDay[]
 
   return (
     <div className="chart" ref={ref} onPointerLeave={() => setTip(null)}>
-      <svg width={W} height={height} viewBox={`0 0 ${W} ${height}`} role="img" aria-label="每天的实际时长（按大类）与计划">
+      <svg width={W} height={height} viewBox={`0 0 ${W} ${height}`} role="img" aria-label="每天的实际时长（按类别）与计划">
         {Array.from({ length: max / step + 1 }, (_, i) => i * step).map((v) => (
           <g key={v}>
             <line x1={pad.l} x2={W - pad.r} y1={y(v)} y2={y(v)} stroke={v === 0 ? AXIS : GRID} strokeWidth={1} />
@@ -156,7 +157,7 @@ export function StackedDays({ days, series, height = 200 }: { days: StackedDay[]
                   <rect key={p.s.key} x={x} y={top} width={bw} height={h} fill={p.s.color} />
                 )
               })}
-              {d.plan > 0 && <line x1={x - 6} x2={x + bw + 6} y1={y(d.plan)} y2={y(d.plan)} stroke="#0b0b0b" strokeWidth={2} strokeLinecap="round" />}
+              {d.plan > 0 && <line x1={x - 6} x2={x + bw + 6} y1={y(d.plan)} y2={y(d.plan)} stroke="var(--chart-plan)" strokeWidth={2} strokeLinecap="round" />}
               <text x={cx} y={height - pad.b + 16} textAnchor="middle" className="chart-label">
                 {d.label}
               </text>

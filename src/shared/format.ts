@@ -17,6 +17,11 @@ export function parseMinutes(input: string): number | null | undefined {
   return Math.round(Number(m[1] ?? 0) * 60 + Number(m[2] ?? 0))
 }
 
+/** 截止日期已过（按本地日期，当天不算过期） */
+export function isOverdue(dueDate: string | null, today = todayLocal()): boolean {
+  return !!dueDate && dueDate < today
+}
+
 export function todayLocal(): string {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`

@@ -165,6 +165,34 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
         </section>
 
         <section>
+          <h3>外观</h3>
+          <div className="segmented" role="radiogroup" aria-label="外观">
+            {(
+              [
+                ['system', '跟随系统'],
+                ['light', '浅色'],
+                ['dark', '深色']
+              ] as const
+            ).map(([v, label]) => (
+              <button
+                type="button"
+                key={v}
+                role="radio"
+                aria-checked={form.theme === v}
+                className={form.theme === v ? 'on' : ''}
+                onClick={() => {
+                  set('theme', v)
+                  // 不等「保存」，点了就换，方便对比
+                  window.api.settings.update({ theme: v })
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section>
           <h3>悬浮窗与快捷键</h3>
           <label className="check">
             <input type="checkbox" checked={form.floatingEnabled} onChange={(e) => set('floatingEnabled', e.target.checked)} />

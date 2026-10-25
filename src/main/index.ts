@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, Notification, safeStorage, screen, shell, Tray } from 'electron'
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, Notification, safeStorage, screen, shell, Tray } from 'electron'
 import type {
   AiConfigPatch,
   CaptureDraft,
@@ -348,7 +348,7 @@ function createMainWindow(): void {
     minHeight: 520,
     title: '计划与复盘',
     icon: resource('icon.png'),
-    backgroundColor: '#f7f6f3',
+    backgroundColor: windowBg(),
     autoHideMenuBar: true,
     show: false,
     webPreferences: webPreferences()
@@ -370,6 +370,11 @@ function createMainWindow(): void {
   })
   mainWin.on('closed', () => (mainWin = null))
   loadRenderer(mainWin)
+}
+
+/** 窗口还没画出界面前的底色，和 CSS 里 --bg 一致，免得深色模式下先闪一下白 */
+function windowBg(): string {
+  return nativeTheme.shouldUseDarkColors ? '#1f1f22' : '#fbfbfa'
 }
 
 function showMain(): void {
@@ -432,6 +437,11 @@ function toggleCapture(): void {
 
 // ---------- 托盘 ----------
 
+function watchTheme(): void {
+  // 跟随系统时，系统切换深浅色后主窗口底色也跟着换
+  nativeTheme.on('updated', () => mainWin?.setBackgroundColor(windowBg()))
+}
+
 function createTray(): void {
   tray = new Tray(nativeImage.createFromPath(resource('tray.png')))
   tray.setToolTip('计划与复盘')
@@ -488,6 +498,9 @@ function applySettings(s: Settings): void {
     registeredHotkey = hotkeyRegistered ? s.hotkey : ''
   }
   if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: s.launchAtLogin, args: ['--hidden'] })
+  // 界面的深浅色走 CSS 的 prefers-color-scheme，这里定下它取系统的还是固定一种
+  nativeTheme.themeSource = s.theme
+  mainWin?.setBackgroundColor(windowBg())
   updateFloatVisibility()
   updateTray()
 }
@@ -552,6 +565,7 @@ if (!app.requestSingleInstanceLock()) {
     registerIpc()
     createMainWindow()
     createTray()
+    watchTheme()
     applySettings(time.getSettings())
     tick()
     setInterval(tick, TICK_MS)

@@ -99,7 +99,8 @@ export const DEFAULT_SETTINGS: Settings = {
   dailyPicks: 2,
   inboxNagCount: 15,
   inboxNagDays: 7,
-  weeklyReviewDay: 0
+  weeklyReviewDay: 0,
+  theme: 'system'
 }
 
 const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/
@@ -445,6 +446,7 @@ export class TimeRepo {
     if (patch.inboxNagCount !== undefined && !intIn(patch.inboxNagCount, 1, 200)) throw new Error('收件箱提示条数要在 1–200 之间')
     if (patch.inboxNagDays !== undefined && !intIn(patch.inboxNagDays, 1, 90)) throw new Error('收件箱提示天数要在 1–90 之间')
     if (patch.weeklyReviewDay !== undefined && !intIn(patch.weeklyReviewDay, 0, 6)) throw new Error('每周整理日不对')
+    if (patch.theme !== undefined && !['system', 'light', 'dark'].includes(patch.theme)) throw new Error('外观设置不对')
     const upsert = this.db.prepare(
       'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
     )

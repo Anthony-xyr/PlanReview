@@ -59,7 +59,7 @@ export function ResurfacePanel({ day, isToday, version, categories, mutate, onSt
   const card = (t: Task, kind: 'due' | 'pick') => {
     const c = t.categoryId ? catById.get(t.categoryId) : undefined
     return (
-      <li key={t.id} className={`rs-item rs-${kind}`} style={{ ['--c' as string]: c?.color ?? '#8a8478' }}>
+      <li key={t.id} className={`rs-item rs-${kind}`} style={{ ['--c' as string]: c?.color ?? 'var(--faint)' }}>
         <div className="rs-title">{t.title}</div>
         <div className="rs-meta">
           {kind === 'due' && t.reviewDate && t.reviewDate < day && <span>原定 {t.reviewDate.slice(5)} 再看</span>}
@@ -106,7 +106,9 @@ export function ResurfacePanel({ day, isToday, version, categories, mutate, onSt
           <div className="muted">昨天说好今天先做</div>
           <div className="rs-title">{data.firstThing.title}</div>
           {data.firstThing.nextStep && <div className="next">下一步：{data.firstThing.nextStep}</div>}
-          <button onClick={() => onStartTimer({ taskId: data.firstThing!.id })}>▶ 开始</button>
+          <button className="secondary" onClick={() => onStartTimer({ taskId: data.firstThing!.id })}>
+            ▶ 开始
+          </button>
         </div>
       )}
       {data.yesterdayUnreviewed && (
@@ -145,7 +147,9 @@ export function ResurfacePanel({ day, isToday, version, categories, mutate, onSt
             {data.inbox.oldestDays > 0 && <>，最早的放了 {data.inbox.oldestDays} 天</>}。花几分钟整理一下？
           </div>
           <div className="rs-actions">
-            <button onClick={onOpenInbox}>去整理</button>
+            <button className="secondary" onClick={onOpenInbox}>
+              去整理
+            </button>
             <button
               className="link"
               onClick={async () => {

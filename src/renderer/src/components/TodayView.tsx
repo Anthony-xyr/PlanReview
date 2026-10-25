@@ -258,7 +258,7 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
                 height: Math.max(12, (e - s) * PX_PER_MIN),
                 left: `calc(${(lane / n) * 100}% + 2px)`,
                 width: `calc(${100 / n}% - 4px)`,
-                ['--c' as string]: c?.color ?? '#8a8478'
+                ['--c' as string]: c?.color ?? 'var(--faint)'
               }}
               onPointerDown={it.live ? undefined : beginItem(kind, it.id, s, e, 'move')}
               title={`${it.title}  ${hhmm(addMinutes(dayStart, s))}–${hhmm(addMinutes(dayStart, e))}`}
@@ -320,7 +320,7 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
             </button>
           )}
           {aiReady && day >= dayOf(now, settings.dayStartHour) && (
-            <button className="secondary" onClick={() => onOpenPlanner(day)} title="AI 往剩下的空档里放待办，勾选后才写入">
+            <button onClick={() => onOpenPlanner(day)} title="AI 往剩下的空档里放待办，勾选后才写入">
               请 AI 排一下
             </button>
           )}
@@ -363,7 +363,7 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
                     e.dataTransfer.effectAllowed = 'copy'
                   }}
                   className="pool-item"
-                  style={{ ['--c' as string]: c?.color ?? '#8a8478' }}
+                  style={{ ['--c' as string]: c?.color ?? 'var(--faint)' }}
                 >
                   <div className="pool-title">{t.title}</div>
                   <div className="pool-meta">

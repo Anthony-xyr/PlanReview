@@ -134,22 +134,25 @@ export function App() {
           <span className="nav-label">类别</span>
         </button>
         <div className="spacer" />
-        <button className="nav-item" onClick={() => setReviewDay(dayOf(new Date(), settings.dayStartHour))}>
+        {/* 下面这些打开对话框或执行操作，不切换页面：分组并用浅一点的字，和上面的导航区分开 */}
+        <div className="nav-heading">复盘</div>
+        <button className="nav-item is-tool" onClick={() => setReviewDay(dayOf(new Date(), settings.dayStartHour))}>
           今日复盘
         </button>
-        <button className="nav-item" onClick={() => setShowInsights(true)}>
-          个人画像
-        </button>
-        <button className="nav-item" onClick={() => setImporting(true)}>
-          导入课表
-        </button>
-        <button className="nav-item" onClick={() => setWrapUp(true)}>
+        <button className="nav-item is-tool" onClick={() => setWrapUp(true)}>
           收尾
         </button>
-        <button className="nav-item" onClick={() => window.api.win.showFloat()}>
+        <button className="nav-item is-tool" onClick={() => setShowInsights(true)}>
+          个人画像
+        </button>
+        <div className="nav-heading">工具</div>
+        <button className="nav-item is-tool" onClick={() => setImporting(true)}>
+          导入课表
+        </button>
+        <button className="nav-item is-tool" onClick={() => window.api.win.showFloat()}>
           显示悬浮窗
         </button>
-        <button className="nav-item" onClick={() => setShowSettings(true)}>
+        <button className="nav-item is-tool" onClick={() => setShowSettings(true)}>
           设置
         </button>
       </nav>

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Category, StartTimerInput, Task, TaskFilter, TaskInput, TimeEntry } from '@shared/types'
 import type { Mutate } from '../ui'
-import { formatMinutes, parseMinutes } from '@shared/format'
+import { formatMinutes, isOverdue, parseMinutes } from '@shared/format'
 import { CategorySelect, TaskDetail } from './TaskDetail'
 import { CaptureConfirm, useSmartCapture } from '../capture'
 import { CategoryDialog, CategoryTabs } from './CategoryManager'
@@ -41,7 +41,7 @@ function pageInfo(view: TaskViewKind, categories: Category[]): PageInfo {
     case 'inbox':
       return {
         title: '收件箱',
-        intro: '随手记下的想法先放这里。整理时给它定个大类和估时，再移到待办，或者直接拖进「今天」的时间轴。',
+        intro: '随手记下的想法先放这里。整理时给它定个类别和估时，再移到待办，或者直接拖进「今天」的时间轴。',
         empty: '收件箱是空的。想到什么，在上面记一句就好，其余信息之后再补。',
         filter: { status: 'inbox' },
         defaults: {},
@@ -50,7 +50,7 @@ function pageInfo(view: TaskViewKind, categories: Category[]): PageInfo {
     case 'active':
       return {
         title: '待办',
-        intro: '整理过、准备去做的任务，按大类分组。数字是这一组的剩余估时（总估时减去已投入）。',
+        intro: '整理过、准备去做的任务，按类别分组。数字是这一组的剩余估时（总估时减去已投入）。',
         empty: '还没有待办。可以在上面直接添加，或者去收件箱整理。',
         filter: { status: 'active' },
         defaults: { status: 'active' },
@@ -225,6 +225,7 @@ export function TasksView({ view, categories, version, mutate, running, onStartT
   }
 
   const totalLeft = tasks.reduce((s, t) => s + remaining(t), 0)
+  const overdue = view.kind === 'done' ? 0 : tasks.filter((t) => isOverdue(t.dueDate)).length
   const noEstimate = tasks.filter((t) => t.estimateMin == null).length
 
   return (
@@ -249,6 +250,11 @@ export function TasksView({ view, categories, version, mutate, running, onStartT
               {noEstimate > 0 && <span className="muted">（{noEstimate} 项还没估时）</span>}
             </p>
           )}
+          {overdue > 0 && (
+            <p className="late-note" role="status">
+              {overdue} 项已过截止日期
+            </p>
+          )}
         </header>
 
         {view.kind === 'category' && (
@@ -271,7 +277,7 @@ export function TasksView({ view, categories, version, mutate, running, onStartT
           >
             <input
               aria-label="添加任务"
-              placeholder={smart.aiOn ? `${info.placeholder}（AI 会拆出日期、估时、大类）` : info.placeholder}
+              placeholder={smart.aiOn ? `${info.placeholder}（AI 会拆出日期、估时、类别）` : info.placeholder}
               value={text}
               disabled={smart.busy}
               onChange={(e) => setText(e.target.value)}
@@ -386,7 +392,12 @@ function TaskRow({ task: t, category, categories, selected, running, triage, sho
               {t.estimateMin != null && ` / 估 ${formatMinutes(t.estimateMin)}`}
             </span>
           )}
-          {t.dueDate && <span>截止 {t.dueDate}</span>}
+          {t.dueDate && (
+            <span className={!ended && isOverdue(t.dueDate) ? 'is-late' : undefined}>
+              {!ended && isOverdue(t.dueDate) ? '已过截止 ' : '截止 '}
+              {t.dueDate}
+            </span>
+          )}
           {t.reviewDate && !ended && <span title="到这天会出现在「今天」页">{t.reviewDate} 再看</span>}
           {t.sourceTaskId && <span title="从其他任务延伸出来">↳ 延伸</span>}
           {t.nextStep && <span className="next">下一步：{t.nextStep}</span>}

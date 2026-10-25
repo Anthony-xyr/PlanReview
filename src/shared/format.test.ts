@@ -19,3 +19,10 @@ describe('minutes', () => {
     expect(parseMinutes('h')).toBeUndefined()
   })
 })
+
+it('截止日期是否已过', async () => {
+  const { isOverdue } = await import('./format')
+  expect(isOverdue('2026-10-21', '2026-10-25')).toBe(true)
+  expect(isOverdue('2026-10-25', '2026-10-25')).toBe(false)
+  expect(isOverdue(null, '2026-10-25')).toBe(false)
+})

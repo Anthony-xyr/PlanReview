@@ -153,7 +153,11 @@ export function TaskDetail({ taskId, categories, onClose, onSelect, mutate, vers
       </label>
 
       <div className="actions">
-        {task.status === 'inbox' && <button onClick={() => save({ status: 'active' })}>移到待办</button>}
+        {task.status === 'inbox' && (
+          <button className="secondary" onClick={() => save({ status: 'active' })}>
+            移到待办
+          </button>
+        )}
         {task.status !== 'done' && <button onClick={() => save({ status: 'done' })}>完成</button>}
         {task.status !== 'dropped' && task.status !== 'done' && (
           <button className="secondary" onClick={() => save({ status: 'dropped' })}>
@@ -181,7 +185,7 @@ export function TaskDetail({ taskId, categories, onClose, onSelect, mutate, vers
             value={spinOffTitle}
             onChange={(e) => setSpinOffTitle(e.target.value)}
           />
-          <button type="submit" disabled={!spinOffTitle.trim()}>
+          <button type="submit" className="secondary" disabled={!spinOffTitle.trim()}>
             拆出
           </button>
         </form>
