@@ -50,6 +50,24 @@ describe('helpers', () => {
   })
 })
 
+describe('activeWeeks', () => {
+  it('计划、记录、完成和新建的任务、存过的复盘都算；上课不算；按一天起点归周', () => {
+    // 2026-10-12 周一。课程时段不算
+    db.prepare("INSERT INTO courses (id, name, meetings, term_start, updated_at) VALUES ('c', '高数', '[]', '2026-09-07', 'x')").run()
+    db.prepare("INSERT INTO plan_blocks (id, title, start_at, end_at, course_id, updated_at) VALUES ('cb', '高数', ?, ?, 'c', 'x')").run(iso(26, 8), iso(26, 9))
+    expect(weekly.activeWeeks()).toEqual([])
+
+    clock = local(5, 10)
+    const t = repo.createTask({ title: '旧任务' }) // 10/05 那周新建
+    // 周一凌晨 3 点（一天从 5 点算）仍归上一周的周日，即 10/12 那周
+    time.createBlock({ title: '熬夜', startAt: iso(19, 3), endAt: iso(19, 4) })
+    clock = local(21, 10)
+    time.createEntry({ title: '补录', startAt: iso(13, 9), endAt: iso(13, 10) })
+    repo.updateTask(t.id, { status: 'done' }) // 10/19 那周完成
+    expect(weekly.activeWeeks()).toEqual(['2026-10-05', '2026-10-12', '2026-10-19'])
+  })
+})
+
 describe('stats', () => {
   it('每天按大类的实际、计划兑现率、睡眠窗口里的活动', () => {
     const [study, , , , fun] = repo.listCategories()

@@ -97,7 +97,7 @@ export function WeeklyReport({ week, review, ai, empty, mutate, onChange, onOpen
         </div>
         {aiReady && !empty && (
           <button onClick={generate} disabled={busy}>
-            {busy ? '正在分析…' : r ? '重新生成' : '生成本周复盘'}
+            {busy ? '正在分析…' : r ? '重新生成' : '生成这一周的复盘'}
           </button>
         )}
       </header>

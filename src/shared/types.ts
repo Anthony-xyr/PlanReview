@@ -615,6 +615,8 @@ export interface Api {
   weekly: {
     /** weekStart 为那一周的周一 */
     stats(weekStart: string): Promise<WeekStats>
+    /** 有内容的周（周一日期），从早到晚 */
+    activeWeeks(): Promise<string[]>
     get(weekStart: string): Promise<WeeklyReview | null>
     /** 让 AI 写本周深度复盘（会覆盖之前的报告和对话） */
     generate(weekStart: string): Promise<WeeklyReview>

@@ -101,6 +101,7 @@ const api: Api & { onFocusCapture(cb: () => void): () => void } = {
   } as Api['review'],
   weekly: {
     stats: call('weekly:stats'),
+    activeWeeks: call('weekly:activeWeeks'),
     get: call('weekly:get'),
     generate: call('weekly:generate'),
     ask: call('weekly:ask'),

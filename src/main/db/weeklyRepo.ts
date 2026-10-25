@@ -12,7 +12,7 @@ import type {
   WeeklyReview,
   WeekStats
 } from '@shared/types'
-import { dayRange, overlapMin, shiftDay } from '@shared/time'
+import { dayOf, dayRange, overlapMin, shiftDay } from '@shared/time'
 import type { Repo } from './repo'
 import type { TimeRepo } from './timeRepo'
 import { nextClock } from './timeRepo'
@@ -195,6 +195,25 @@ export class WeeklyRepo {
       spinOffs: count('SELECT COUNT(*) AS n FROM tasks WHERE source_task_id IS NOT NULL AND created_at >= ? AND created_at < ?', fromIso, toIso),
       reviewedDays: moods.size
     }
+  }
+
+  /**
+   * 有内容的周（周一日期，从早到晚）：有计划（不算上课）、实际记录、完成或新建的任务，或存过周复盘。
+   * 时间按一天起点归日，和 stats 的口径一致。
+   */
+  activeWeeks(): string[] {
+    const cfg = this.time.getSettings()
+    const isos = this.db
+      .prepare(
+        `SELECT start_at AS t FROM plan_blocks WHERE course_id IS NULL
+         UNION SELECT start_at FROM time_entries
+         UNION SELECT completed_at FROM tasks WHERE status = 'done' AND completed_at IS NOT NULL
+         UNION SELECT created_at FROM tasks`
+      )
+      .all() as { t: string }[]
+    const weeks = new Set(isos.map((r) => mondayOf(dayOf(new Date(r.t), cfg.dayStartHour))))
+    for (const r of this.db.prepare('SELECT week_start FROM weekly_reviews WHERE report IS NOT NULL').all() as { week_start: string }[]) weeks.add(r.week_start)
+    return [...weeks].sort()
   }
 
   // ---------- 周复盘报告与追问 ----------

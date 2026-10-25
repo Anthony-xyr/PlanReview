@@ -187,7 +187,7 @@ const READ_ONLY = new Set([
   'ai:getConfig', 'ai:test', 'ai:parseCapture', 'ai:reparseCapture', 'ai:parseSchedule', 'courses:list', 'habits:list',
   // 首次调用会定下当天的随机推送，但界面上没有可见变化
   'resurface:get', 'review:summary',
-  'weekly:stats', 'weekly:get', 'insights:list', 'planner:suggest'
+  'weekly:stats', 'weekly:activeWeeks', 'weekly:get', 'insights:list', 'planner:suggest'
 ])
 
 function registerIpc(): void {
@@ -254,6 +254,7 @@ function registerIpc(): void {
     'review:summary': (day: string) => review.summary(day),
     'review:save': (day: string, input: DailyReviewInput) => review.save(day, input),
     'weekly:stats': (weekStart: string) => weekly.stats(weekStart),
+    'weekly:activeWeeks': () => weekly.activeWeeks(),
     'weekly:get': (weekStart: string) => weekly.get(weekStart),
     'weekly:generate': (weekStart: string) => generateWeeklyReview(weekStart),
     'weekly:ask': (weekStart: string, question: string) => askWeeklyReview(weekStart, question),

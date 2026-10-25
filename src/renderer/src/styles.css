@@ -438,6 +438,8 @@ html.is-float, html.is-float body { background: transparent; overflow: hidden; }
 .chart rect[tabindex]:focus { outline: none; }
 .chart rect[tabindex]:focus-visible { stroke: var(--accent); stroke-width: 1; }
 .chart-note { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
+.weekly-note { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0 0 14px; padding: 8px 12px; border-radius: 8px; background: var(--accent-soft); font-size: 13px; }
+.weekly-note .link { padding: 0; }
 .chart-tip { position: absolute; transform: translateX(-50%); pointer-events: none; z-index: 5; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.1); font-size: 12px; white-space: nowrap; }
 .chart-tip-title { color: var(--muted); margin-bottom: 4px; }
 .chart-tip-row { display: flex; align-items: center; gap: 6px; line-height: 1.6; }
