@@ -1,6 +1,6 @@
 {
   "name": "plan-review",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "个人计划与时间复盘助手",
   "main": "out/main/index.js",
