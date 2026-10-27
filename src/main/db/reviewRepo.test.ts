@@ -93,6 +93,24 @@ describe('resurface', () => {
     expect(review.get('2026-10-16').picks).toEqual([])
   })
 
+  it('推送后排进了计划，当天就不再出现；计划删掉后回来', () => {
+    time.updateSettings({ dailyPicks: 1 })
+    const t = repo.createTask({ title: '学吉他', status: 'active' })
+    expect(review.get(DAY).picks.map((x) => x.id)).toEqual([t.id])
+    const block = time.createBlock({ taskId: t.id, startAt: iso(15, 21), endAt: iso(15, 22) })
+    expect(review.get(DAY).picks).toEqual([])
+    time.deleteBlock(block.id)
+    expect(review.get(DAY).picks.map((x) => x.id)).toEqual([t.id])
+  })
+
+  it('推送后加了截止日期，当天就不再出现', () => {
+    time.updateSettings({ dailyPicks: 1 })
+    const t = repo.createTask({ title: '梳理科研复现任务', status: 'active' })
+    expect(review.get(DAY).picks.map((x) => x.id)).toEqual([t.id])
+    repo.updateTask(t.id, { dueDate: '2026-10-16' })
+    expect(review.get(DAY).picks).toEqual([])
+  })
+
   it('当天先打开时还没有候选，之后加了任务会补抽', () => {
     time.updateSettings({ dailyPicks: 1 })
     expect(review.get(DAY).picks).toEqual([])

@@ -39,7 +39,8 @@ export function ResurfacePanel({ day, isToday, version, categories, mutate, onSt
   }, [day, isToday, version, tick])
 
   useEffect(() => {
-    const ids = data ? [...data.due, ...data.picks, ...(data.firstThing ? [data.firstThing] : [])].map((t) => t.id) : []
+    // 随机抽到的待办照样留在「待安排」里，所以「随手翻到」不算在内
+    const ids = data ? [...data.due, ...(data.firstThing ? [data.firstThing] : [])].map((t) => t.id) : []
     onSurfaced(new Set(ids))
   }, [data, onSurfaced])
 
