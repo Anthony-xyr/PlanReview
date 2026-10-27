@@ -142,10 +142,12 @@ export class ReviewRepo {
       this.setState(day, 'picks', ids)
     }
     const handled = new Set(this.getState<string[]>(day, 'handled') ?? [])
+    // 抽到之后又排进计划、加了截止或查看日的，已经不算「没排期」，不再显示
+    const eligible = new Set(this.pickCandidates(day).map((c) => c.task.id))
     const byId = new Map(open.map((t) => [t.id, t]))
     const picks = ids
       .map((id) => byId.get(id))
-      .filter((t): t is Task => !!t && !handled.has(t.id) && !t.reviewDate && t.id !== firstThing?.id)
+      .filter((t): t is Task => !!t && eligible.has(t.id) && !handled.has(t.id) && t.id !== firstThing?.id)
 
     const inbox = open.filter((t) => t.status === 'inbox')
     const oldest = inbox.reduce((m, t) => (t.createdAt < m ? t.createdAt : m), this.now().toISOString())

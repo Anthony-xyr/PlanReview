@@ -108,8 +108,8 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
   const plannedByTask = new Map<string, number>()
   for (const b of blocks) if (b.taskId) plannedByTask.set(b.taskId, (plannedByTask.get(b.taskId) ?? 0) + overlapMin(...span(b.startAt, b.endAt), 0, DAY_MIN))
   const scheduledIds = new Set(blocks.map((b) => b.taskId).filter(Boolean))
-  // 找回区已经列出来的不在「待安排」里重复
-  const unscheduled = tasks.filter((t) => !scheduledIds.has(t.id) && !surfaced.has(t.id))
+  // 只列正式待办，收件箱的先整理再排；找回区已经列出来的不在「待安排」里重复
+  const unscheduled = tasks.filter((t) => t.status === 'active' && !scheduledIds.has(t.id) && !surfaced.has(t.id))
 
   // ---------- 拖拽 ----------
 
@@ -350,7 +350,7 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
           )}
           <h2>待安排</h2>
           <p className="muted">把任务拖到右边的「计划」列。估时会扣掉已投入的部分。</p>
-          {unscheduled.length === 0 && <p className="muted">待办和收件箱里的任务都已经排进今天了。</p>}
+          {unscheduled.length === 0 && <p className="muted">待办里的任务都已经排进今天了。</p>}
           <ul className="pool-list">
             {unscheduled.map((t) => {
               const c = t.categoryId ? catById.get(t.categoryId) : undefined
@@ -367,7 +367,6 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
                 >
                   <div className="pool-title">{t.title}</div>
                   <div className="pool-meta">
-                    {t.status === 'inbox' && <span className="badge">收件箱</span>}
                     {t.estimateMin != null && (
                       <span>
                         已投入 {formatMinutes(t.spentMin) || '0m'} / 估 {formatMinutes(t.estimateMin)}
