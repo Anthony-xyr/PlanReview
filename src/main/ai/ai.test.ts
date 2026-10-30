@@ -268,6 +268,35 @@ describe('courses', () => {
     expect(time.listBlocks(new Date(2026, 8, 1).toISOString(), new Date(2026, 9, 1).toISOString())).toHaveLength(0)
   })
 
+  it('不同上课时段地点不同时，分别保留各自地点', () => {
+    const courses = new CourseRepo(db)
+    const time = new TimeRepo(db)
+    const draft = {
+      termStart: '2026-09-07',
+      notes: [],
+      courses: [
+        {
+          name: '计网',
+          teacher: '',
+          location: '默认大教室',
+          meetings: [
+            { weekday: 1, start: '08:00', end: '09:35', weeks: [1], location: 'A101' },
+            { weekday: 3, start: '14:00', end: '15:35', weeks: [1], location: 'B302' },
+            { weekday: 5, start: '10:00', end: '11:35', weeks: [1], location: '' }
+          ]
+        }
+      ]
+    }
+    expect(courses.commit(draft, true)).toEqual({ courses: 1, blocks: 3 })
+    const blocks = time.listBlocks(new Date(2026, 8, 1).toISOString(), new Date(2026, 9, 1).toISOString())
+    expect(blocks.map((b) => [b.title, b.location])).toEqual([
+      ['计网', 'A101'],
+      ['计网', 'B302'],
+      ['计网', '默认大教室']
+    ])
+    courses.removeAll()
+  })
+
   it('校验', () => {
     const courses = new CourseRepo(db)
     expect(() => courses.commit({ termStart: '', courses: [], notes: [] }, false)).toThrow(/第一周/)

@@ -22,6 +22,7 @@ interface BlockRow {
   task_status: PlanBlock['taskStatus']
   start_at: string
   end_at: string
+  location?: string | null
   course_id: string | null
   course_location: string | null
 }
@@ -56,7 +57,7 @@ function toBlock(r: BlockRow): PlanBlock {
     startAt: r.start_at,
     endAt: r.end_at,
     courseId: r.course_id,
-    location: r.course_location ?? ''
+    location: r.location || r.course_location || ''
   }
 }
 
@@ -179,13 +180,14 @@ export class TimeRepo {
   createBlock(input: BlockInput): PlanBlock {
     const { taskId, title, categoryId } = this.subject(input)
     const [s, e] = this.range(input.startAt, input.endAt)
+    const location = input.location?.trim() ?? ''
     const id = crypto.randomUUID()
     this.db
       .prepare(
-        `INSERT INTO plan_blocks (id, task_id, title, category_id, start_at, end_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO plan_blocks (id, task_id, title, category_id, start_at, end_at, location, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(id, taskId, title, categoryId, s, e, this.nowIso())
+      .run(id, taskId, title, categoryId, s, e, location, this.nowIso())
     // 排进计划的收件箱任务视为已整理
     if (taskId) this.db.prepare(`UPDATE tasks SET status = 'active' WHERE id = ? AND status = 'inbox'`).run(taskId)
     return this.getBlock(id)!
@@ -201,12 +203,13 @@ export class TimeRepo {
     }
     const { taskId, title, categoryId } = this.subject(merged)
     const [s, e] = this.range(patch.startAt ?? cur.startAt, patch.endAt ?? cur.endAt)
+    const location = patch.location !== undefined ? patch.location.trim() : cur.location
     this.db
       .prepare(
-        `UPDATE plan_blocks SET task_id = ?, title = ?, category_id = ?, start_at = ?, end_at = ?, updated_at = ?
+        `UPDATE plan_blocks SET task_id = ?, title = ?, category_id = ?, start_at = ?, end_at = ?, location = ?, updated_at = ?
          WHERE id = ?`
       )
-      .run(taskId, title, categoryId, s, e, this.nowIso(), id)
+      .run(taskId, title, categoryId, s, e, location, this.nowIso(), id)
     return this.getBlock(id)!
   }
 
