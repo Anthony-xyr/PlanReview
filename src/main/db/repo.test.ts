@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { migrate } from './schema'
 import { Repo } from './repo'
 
@@ -12,10 +12,72 @@ beforeEach(() => {
   repo = new Repo(db)
 })
 
+afterEach(() => db.close())
+
 describe('schema', () => {
   it('迁移可重复执行，并预置默认大类', () => {
     migrate(db)
     expect(repo.listCategories().map((c) => c.name)).toEqual(['学习', '课程作业', '项目', '生活', '娱乐'])
+  })
+
+  it.each([
+    { version: 7, reminders: false, locations: false, habits: false },
+    { version: 8, reminders: false, locations: true, habits: false },
+    { version: 8, reminders: true, locations: false, habits: false },
+    { version: 9, reminders: true, locations: false, habits: true },
+    { version: 10, reminders: false, locations: true, habits: false }
+  ])('真实迁移兼容 $version（提醒表 $reminders、地点列 $locations）', ({ version, reminders, locations, habits }) => {
+    // 从真实公共结构构造旧版数据库形状，升级与重复打开都走应用的 migrate()。
+    if (!reminders) db.exec('DROP TABLE reminder_dismissals')
+    else db.exec("INSERT INTO reminder_dismissals VALUES ('once', 'keep-me', '2026-09-01')")
+    if (!locations) db.exec('ALTER TABLE plan_blocks DROP COLUMN location')
+    if (habits) db.exec("CREATE TABLE planner_habits (id TEXT PRIMARY KEY); INSERT INTO planner_habits VALUES ('keep-habit')")
+    db.exec(`PRAGMA user_version = ${version}`)
+
+    const insertCourse = db.prepare(`
+      INSERT INTO courses (id,name,location,meetings,term_start,updated_at) VALUES (?, ?, ?, ?, '2026-09-09', '2026-09-01')
+    `)
+    insertCourse.run('c1', '课程', '  默认地点 ', JSON.stringify([
+      { weekday: 1, start: '08:00', end: '09:35', weeks: [1], location: ' A101 ' },
+      { weekday: 1, start: '08:00', end: '09:35', weeks: [2], location: 'B202' },
+      { weekday: 3, start: '08:00', end: '09:35', weeks: [1], location: 'C303' },
+      { weekday: 1, start: '08:00', end: '10:00', weeks: [1], location: 'D404' },
+      { weekday: 4, start: '08:00', end: '09:35', weeks: [1], location: '  ' },
+      { weekday: 5, start: '08:00', end: '09:35', weeks: [1], location: '歧义 1' },
+      { weekday: 5, start: '08:00', end: '09:35', weeks: [1], location: '歧义 2' }
+    ]))
+    insertCourse.run('c2', '旧课', '不完整课表', '{broken')
+    const add = db.prepare(`
+      INSERT INTO plan_blocks (id,title,start_at,end_at,updated_at,course_id) VALUES (?, ?, ?, ?, 'original', ?)
+    `)
+    const block = (id: string, day: number, endMinute = 35, course: string | null = 'c1', endHour = 9) => {
+      add.run(id, id, new Date(2026, 8, day, 8).toISOString(), new Date(2026, 8, day, endHour, endMinute).toISOString(), course)
+    }
+    block('week1', 7)
+    block('week2', 14)
+    block('wednesday', 9)
+    block('different-end', 7, 0, 'c1', 10)
+    block('blank', 10)
+    block('ambiguous', 11)
+    block('moved', 8)
+    block('bad-json', 7, 35, 'c2')
+    block('free', 7, 35, null)
+    if (locations) db.exec("UPDATE plan_blocks SET location = '  用户已修改  ' WHERE id = 'week2'")
+
+    const expected = {
+      week1: 'A101', week2: locations ? '  用户已修改  ' : 'B202', wednesday: 'C303', 'different-end': 'D404',
+      blank: '默认地点', ambiguous: '默认地点', moved: '默认地点', 'bad-json': '不完整课表', free: ''
+    }
+    for (let attempt = 0; attempt < 2; attempt++) {
+      migrate(db)
+      expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: Math.max(version, 8) })
+      const rows = db.prepare('SELECT id, location, updated_at FROM plan_blocks').all()
+      expect(Object.fromEntries(rows.map((r) => [r.id, r.location]))).toEqual(expected)
+      expect(rows.every((r) => r.updated_at === 'original')).toBe(true)
+      expect(db.prepare('SELECT value FROM reminder_dismissals').all()).toEqual(reminders ? [{ value: 'keep-me' }] : [])
+      expect(!!db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'planner_habits'").get()).toBe(habits)
+      if (habits) expect(db.prepare('SELECT id FROM planner_habits').get()).toMatchObject({ id: 'keep-habit' })
+    }
   })
 })
 

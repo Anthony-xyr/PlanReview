@@ -1,4 +1,14 @@
 import type { DatabaseSync } from 'node:sqlite'
+import { backfillPlanLocations } from './courseLocations'
+
+const createReminderDismissals = `
+  CREATE TABLE IF NOT EXISTS reminder_dismissals (
+    scope      TEXT NOT NULL CHECK (scope IN ('once', 'group')),
+    value      TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (scope, value)
+  );
+`
 
 // 按顺序执行的迁移；PRAGMA user_version 记录已执行到第几条。
 // 主键用 UUID、每行带 updated_at，方便以后做多端同步。
@@ -165,15 +175,8 @@ const migrations: string[] = [
     updated_at   TEXT NOT NULL
   );
   `,
-  // 提醒的关闭记录：「这次不再提醒」「今晚 / 今天不再提醒」重启后也要记得；稍后再说不存
-  `
-  CREATE TABLE reminder_dismissals (
-    scope      TEXT NOT NULL CHECK (scope IN ('once', 'group')),
-    value      TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    PRIMARY KEY (scope, value)
-  );
-  `
+  // M8：提醒的关闭记录，和已发布过的「M8 地点列」分支兼容。
+  createReminderDismissals
 ]
 
 // 默认大类颜色：按固定顺序取自经过色盲校验的分类色板（相邻两色在各类色觉下都能分清）
@@ -202,6 +205,24 @@ export function migrate(db: DatabaseSync): void {
       db.exec('ROLLBACK')
       throw err
     }
+  }
+
+  // 两种 v8 的实际结构不同，v9 也可能没有地点列。这里按结构补齐，不登记本分支没有的 M9。
+  reconcilePlanLocations(db)
+}
+
+function reconcilePlanLocations(db: DatabaseSync): void {
+  db.exec('BEGIN')
+  try {
+    db.exec(createReminderDismissals)
+    if (!db.prepare("SELECT 1 FROM pragma_table_info('plan_blocks') WHERE name = 'location'").get()) {
+      db.exec("ALTER TABLE plan_blocks ADD COLUMN location TEXT NOT NULL DEFAULT ''")
+    }
+    backfillPlanLocations(db)
+    db.exec('COMMIT')
+  } catch (err) {
+    db.exec('ROLLBACK')
+    throw err
   }
 }
 
