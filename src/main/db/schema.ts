@@ -164,6 +164,13 @@ const migrations: string[] = [
     created_at   TEXT NOT NULL,
     updated_at   TEXT NOT NULL
   );
+  `,
+  // M8：计划时段地点。以前只能取课程表地点，但同一门课在不同周次/星期地点可能不同
+  `
+  ALTER TABLE plan_blocks ADD COLUMN location TEXT NOT NULL DEFAULT '';
+  UPDATE plan_blocks SET location = COALESCE((
+    SELECT location FROM courses WHERE courses.id = plan_blocks.course_id
+  ), '') WHERE course_id IS NOT NULL;
   `
 ]
 

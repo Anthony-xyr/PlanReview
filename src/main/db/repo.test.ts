@@ -17,6 +17,44 @@ describe('schema', () => {
     migrate(db)
     expect(repo.listCategories().map((c) => c.name)).toEqual(['学习', '课程作业', '项目', '生活', '娱乐'])
   })
+
+  it('M8 迁移：旧课程计划块地点能够平滑升级并回填', () => {
+    const memDb = new DatabaseSync(':memory:')
+    memDb.exec('PRAGMA foreign_keys = ON;')
+    memDb.exec(`
+      CREATE TABLE courses (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        location TEXT NOT NULL DEFAULT '',
+        teacher TEXT NOT NULL DEFAULT '',
+        meetings TEXT NOT NULL,
+        term_start TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE plan_blocks (
+        id TEXT PRIMARY KEY,
+        task_id TEXT,
+        title TEXT NOT NULL DEFAULT '',
+        category_id TEXT,
+        start_at TEXT NOT NULL,
+        end_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        course_id TEXT REFERENCES courses(id) ON DELETE CASCADE
+      );
+      INSERT INTO courses (id, name, location, teacher, meetings, term_start, updated_at)
+      VALUES ('c1', '编译原理', '教三 301', '张老师', '[]', '2026-09-01', '2026-09-01T00:00:00Z');
+      INSERT INTO plan_blocks (id, title, start_at, end_at, updated_at, course_id)
+      VALUES ('b1', '编译原理', '2026-09-01T08:00:00Z', '2026-09-01T09:35:00Z', '2026-09-01T00:00:00Z', 'c1');
+    `)
+    memDb.exec(`
+      ALTER TABLE plan_blocks ADD COLUMN location TEXT NOT NULL DEFAULT '';
+      UPDATE plan_blocks SET location = COALESCE((
+        SELECT location FROM courses WHERE courses.id = plan_blocks.course_id
+      ), '') WHERE course_id IS NOT NULL;
+    `)
+    const updated = memDb.prepare("SELECT location FROM plan_blocks WHERE id = 'b1'").get() as { location: string }
+    expect(updated.location).toBe('教三 301')
+  })
 })
 
 describe('tasks', () => {
