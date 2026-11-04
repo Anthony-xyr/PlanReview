@@ -8,12 +8,13 @@ import { candidates, ReminderCenter, type Snapshot } from './reminders'
 // 测试用本地时间
 const local = (h: number, m = 0, dayOffset = 0) => new Date(2026, 9, 15 + dayOffset, h, m)
 
+let db: DatabaseSync
 let repo: Repo
 let time: TimeRepo
 let clock: Date
 
 beforeEach(() => {
-  const db = new DatabaseSync(':memory:')
+  db = new DatabaseSync(':memory:')
   migrate(db)
   repo = new Repo(db)
   clock = local(14)
@@ -29,6 +30,9 @@ const snap = (over: Partial<Snapshot> = {}): Snapshot => ({
 })
 
 const kinds = (s: Snapshot) => candidates(s).map((c) => c.kind)
+
+/** 每次新建都从数据库读关闭记录，相当于重启软件 */
+const newCenter = () => new ReminderCenter(time, db, () => clock)
 
 describe('clock helpers', () => {
   it('nextClock 取下一次出现', () => {
@@ -156,7 +160,7 @@ describe('candidates', () => {
 
 describe('ReminderCenter', () => {
   it('关闭后同一提醒不再出现；延长后到新的点再提醒', () => {
-    const center = new ReminderCenter(time)
+    const center = newCenter()
     time.start({ title: 'a', durationMin: 30 })
     clock = local(14, 31)
     const r = center.evaluate(snap())!
@@ -170,7 +174,7 @@ describe('ReminderCenter', () => {
   })
 
   it('稍后提醒到时间才再出现', () => {
-    const center = new ReminderCenter(time)
+    const center = newCenter()
     time.start({ title: 'a', durationMin: 30 })
     clock = local(14, 31)
     const r = center.evaluate(snap())!
@@ -183,7 +187,7 @@ describe('ReminderCenter', () => {
 
   it('今晚不再提醒：同组都不出现', () => {
     time.updateSettings({ leaveEnabled: false })
-    const center = new ReminderCenter(time)
+    const center = newCenter()
     clock = local(0, 5, 1)
     const r = center.evaluate(snap())!
     expect(r.kind).toBe('sleep-lead')
@@ -193,12 +197,69 @@ describe('ReminderCenter', () => {
   })
 
   it('延长类提醒附带影响', () => {
-    const center = new ReminderCenter(time)
+    const center = newCenter()
     time.createBlock({ title: '物理', startAt: local(14, 40).toISOString(), endAt: local(15, 30).toISOString() })
     time.start({ title: 'a', durationMin: 30 })
     clock = local(14, 31)
     const r = center.evaluate(snap())!
     expect(r.kind).toBe('session-end')
     expect(r.impact?.squeezed.map((x) => x.title)).toEqual(['物理'])
+  })
+})
+
+describe('关闭记录重启后也记得', () => {
+  it('本次到点「这次不再提醒」：重启后也不出现；延长后到新的点再提醒', () => {
+    time.updateSettings({ leaveEnabled: false })
+    time.start({ title: 'a', durationMin: 30 })
+    clock = local(14, 31)
+    const center = newCenter()
+    const r = center.evaluate(snap())!
+    expect(r.kind).toBe('session-end')
+    center.dismiss(r.id)
+    clock = local(14, 50)
+    expect(newCenter().evaluate(snap())).toBeNull()
+
+    time.extend(15)
+    clock = local(15, 6)
+    expect(newCenter().evaluate(snap())?.kind).toBe('session-end')
+  })
+
+  it('离开自习室「今天不再提醒」：当天重启后也不出现，第二天照常', () => {
+    clock = local(21, 55)
+    const center = newCenter()
+    const r = center.evaluate(snap())!
+    expect(r.kind).toBe('leave')
+    center.dismiss(r.id, 'group')
+    clock = local(22, 30)
+    expect(newCenter().evaluate(snap())).toBeNull()
+
+    clock = local(21, 55, 1)
+    expect(newCenter().evaluate(snap())?.kind).toBe('leave')
+  })
+
+  it('今晚不再提醒：跨过零点、重启后也不出现', () => {
+    time.updateSettings({ leaveEnabled: false })
+    clock = local(0, 5, 1)
+    const center = newCenter()
+    center.dismiss(center.evaluate(snap())!.id, 'group')
+    clock = local(0, 40, 1)
+    expect(newCenter().evaluate(snap())).toBeNull()
+  })
+
+  it('稍后再说不存：重启后马上再出现', () => {
+    time.start({ title: 'a', durationMin: 30 })
+    clock = local(14, 31)
+    const center = newCenter()
+    center.snooze(center.evaluate(snap())!.id, 5, clock)
+    expect(center.evaluate(snap())).toBeNull()
+    expect(newCenter().evaluate(snap())?.kind).toBe('session-end')
+  })
+
+  it('7 天前的记录启动时清掉', () => {
+    db.prepare('INSERT INTO reminder_dismissals (scope, value, created_at) VALUES (?, ?, ?)').run('once', 'old', local(14, 0, -8).toISOString())
+    db.prepare('INSERT INTO reminder_dismissals (scope, value, created_at) VALUES (?, ?, ?)').run('group', 'recent', local(14, 0, -6).toISOString())
+    newCenter()
+    const left = (db.prepare('SELECT value FROM reminder_dismissals').all() as { value: string }[]).map((x) => x.value)
+    expect(left).toEqual(['recent'])
   })
 })

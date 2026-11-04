@@ -164,6 +164,15 @@ const migrations: string[] = [
     created_at   TEXT NOT NULL,
     updated_at   TEXT NOT NULL
   );
+  `,
+  // 提醒的关闭记录：「这次不再提醒」「今晚 / 今天不再提醒」重启后也要记得；稍后再说不存
+  `
+  CREATE TABLE reminder_dismissals (
+    scope      TEXT NOT NULL CHECK (scope IN ('once', 'group')),
+    value      TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (scope, value)
+  );
   `
 ]
 
