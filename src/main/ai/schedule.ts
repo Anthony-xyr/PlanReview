@@ -4,6 +4,12 @@ import { chat, extractJson, type AiEndpoint, type ChatMessage, type ContentPart 
 /** 单个文件给模型的文本上限，防止一份大表格把上下文撑爆 */
 const MAX_TEXT_CHARS = 60_000
 
+const WEEKDAYS = '日一二三四五六'
+
+function localDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 export const SCHEDULE_SYSTEM = `你是课程表解析器。用户会上传若干文件：课程表（截图、PDF 文字或表格），通常还有学校的作息时间表（第几节课几点开始、几点结束）。
 你的任务：把课程表里的「第几节到第几节」用作息时间表换算成具体的开始、结束时间，输出结构化课表。
 
@@ -28,14 +34,18 @@ export const SCHEDULE_SYSTEM = `你是课程表解析器。用户会上传若干
 - start / end：24 小时制 'HH:MM'。第 m 节到第 n 节，开始时间取第 m 节的开始，结束时间取第 n 节的结束。
 - weeks：上课的周次列表，要展开成具体数字。例：「1-16周」→ 1 到 16；「1-15周(单)」→ 1,3,5,…,15；「2-16双周」→ 2,4,…,16；「1-8,10-16周」→ 跳过第 9 周。课表上完全没写周次时，按 1-16 周处理，并在 notes 里说明。
 - 同一门课在不同时间上课，就放多个 meetings；同一门课不要拆成多个 course。
-- termStart：用户告诉了你、或者文件里写了「第一周从 X 月 X 日开始」才填第一周的周一，否则填空字符串。
+- termStart：学期第一周周一的日期（YYYY-MM-DD）。
+  - 用户或文件写明了第一周从哪天开始，填那一天所在周的周一；
+  - 用户说明了当前是第几周（例如「今天是第11周」），请结合用户发消息时的今天日期倒推算出第 1 周周一；
+  - 否则填空字符串。
 - 看不清、对不上、作息表缺失导致换算不了的，写进 notes，不要编造。缺作息表时可以按常见作息估计，但一定要在 notes 里明确说明是估计的。
 - 只输出 JSON。`
 
-export function scheduleMessages(files: ImportFile[], hint: string): ChatMessage[] {
+export function scheduleMessages(files: ImportFile[], hint: string, now = new Date()): ChatMessage[] {
   const parts: ContentPart[] = []
+  const todayStr = `今天是 ${localDate(now)}，星期${WEEKDAYS[now.getDay()]}。时区为用户本地时间。`
   const intro = hint.trim() ? `补充说明：${hint.trim()}\n\n` : ''
-  parts.push({ type: 'text', text: `${intro}下面是我上传的 ${files.length} 个文件。` })
+  parts.push({ type: 'text', text: `${todayStr}\n${intro}下面是我上传的 ${files.length} 个文件。` })
   for (const f of files) {
     if (f.kind === 'image') {
       parts.push({ type: 'text', text: `【文件：${f.name}（图片）】` })
@@ -93,8 +103,14 @@ export function sanitizeSchedule(raw: unknown): ScheduleDraft {
   return { termStart: /^\d{4}-\d{2}-\d{2}$/.test(ts) ? ts : '', courses, notes }
 }
 
-export async function parseSchedule(ep: AiEndpoint, files: ImportFile[], hint: string, reasoningEffort: 'low' | 'medium' | 'high' = 'medium'): Promise<ScheduleDraft> {
+export async function parseSchedule(
+  ep: AiEndpoint,
+  files: ImportFile[],
+  hint: string,
+  reasoningEffort: 'low' | 'medium' | 'high' = 'medium',
+  now = new Date()
+): Promise<ScheduleDraft> {
   if (!files.length) throw new Error('请先选择文件')
-  const out = await chat(ep, scheduleMessages(files, hint), { json: !files.some((f) => f.kind === 'image'), timeoutMs: 180_000, reasoningEffort })
+  const out = await chat(ep, scheduleMessages(files, hint, now), { json: !files.some((f) => f.kind === 'image'), timeoutMs: 180_000, reasoningEffort })
   return sanitizeSchedule(extractJson(out))
 }

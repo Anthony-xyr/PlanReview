@@ -211,6 +211,14 @@ describe('schedule', () => {
     expect(parts[0].text).toContain('9 月 1 日')
   })
 
+  it('提示词带上当前日期，支持从周次倒推第一周', () => {
+    const tuesday = new Date(2026, 10, 10)
+    const msgs = scheduleMessages([], '今天是第11周', tuesday)
+    const text = (msgs[1].content as { type: string; text?: string }[])[0].text!
+    expect(text).toContain('今天是 2026-11-10，星期二')
+    expect(text).toContain('今天是第11周')
+  })
+
   it('清洗：时间补零、周次去重排序、坏记录进 notes、同名合并', () => {
     const d = sanitizeSchedule({
       termStart: '2026-09-07',
