@@ -52,6 +52,13 @@ describe('plan blocks', () => {
     expect(u.title).toBe('a')
     expect(u.endAt).toBe(at('11:30'))
   })
+
+  it('支持记录与修改计划地点', () => {
+    const b = time.createBlock({ title: '自习', startAt: at('08:00'), endAt: at('09:00'), location: '图书馆三楼' })
+    expect(b.location).toBe('图书馆三楼')
+    const u = time.updateBlock(b.id, { location: '自习室 201' })
+    expect(u.location).toBe('自习室 201')
+  })
 })
 
 describe('timer', () => {

@@ -64,7 +64,7 @@ export class CourseRepo {
       const now = new Date().toISOString()
       const insCourse = this.db.prepare('INSERT INTO courses (id, name, location, teacher, meetings, term_start, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
       const insBlock = this.db.prepare(
-        'INSERT INTO plan_blocks (id, task_id, title, category_id, start_at, end_at, updated_at, course_id) VALUES (?, NULL, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO plan_blocks (id, task_id, title, category_id, start_at, end_at, location, updated_at, course_id) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?)'
       )
       let blocks = 0
       for (const c of draft.courses) {
@@ -73,7 +73,8 @@ export class CourseRepo {
         for (const m of c.meetings)
           for (const w of m.weeks) {
             const day = meetingDate(draft.termStart, w, m.weekday)
-            insBlock.run(crypto.randomUUID(), c.name.trim(), cat, atClock(day, m.start).toISOString(), atClock(day, m.end).toISOString(), now, id)
+            const loc = (m.location || c.location || '').trim()
+            insBlock.run(crypto.randomUUID(), c.name.trim(), cat, atClock(day, m.start).toISOString(), atClock(day, m.end).toISOString(), loc, now, id)
             blocks++
           }
       }
