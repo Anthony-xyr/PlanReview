@@ -79,7 +79,12 @@ export function ImportDialog({ onClose, onOpenSettings, onDone }: Props) {
     setBusy('AI 正在分析课表，图片较多时可能要一两分钟…')
     try {
       const d = await window.api.ai.parseSchedule(files, hint)
-      setDraft({ ...d, termStart: d.termStart || thisMonday() })
+      const termStart = d.termStart || thisMonday()
+      const notes = [...d.notes]
+      if (!d.termStart) {
+        notes.push(`未在课表或补充说明中识别到开学日期，已默认填充本周周一（${termStart}）。若当前非第 1 周，请在下方修改。`)
+      }
+      setDraft({ ...d, termStart, notes })
     } catch (e) {
       setError(errorText(e))
     } finally {
@@ -163,7 +168,7 @@ export function ImportDialog({ onClose, onOpenSettings, onDone }: Props) {
               <textarea
                 rows={2}
                 value={hint}
-                placeholder="例如：第一周从 9 月 7 日开始；周三下午的体育课不用导入"
+                placeholder="例如：今天是第11周；或第一周从 9 月 7 日开始；周三下午的体育课不用导入"
                 onChange={(e) => setHint(e.target.value)}
               />
             </label>
