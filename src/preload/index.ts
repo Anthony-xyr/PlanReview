@@ -67,7 +67,8 @@ const api: Api & { onFocusCapture(cb: () => void): () => void } = {
     showFloat: call('win:showFloat'),
     hideFloat: call('win:hideFloat'),
     resizeFloat: call('win:resizeFloat'),
-    status: call('win:status')
+    status: call('win:status'),
+    platform: process.platform
   } as Api['win'],
   ai: {
     getConfig: call('ai:getConfig'),

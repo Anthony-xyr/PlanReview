@@ -140,6 +140,21 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--accent); }
   border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 2px;
 }
 .brand { font-weight: 600; padding: 4px 10px 14px; }
+
+/* ---------- 顶部标题栏：Windows 下取代原生标题栏 ---------- */
+
+.window-titlebar {
+  position: fixed; top: 0; left: 0; right: 0; height: 34px;
+  display: flex; align-items: stretch; user-select: none; -webkit-app-region: drag;
+}
+.window-titlebar-left {
+  width: 180px; flex-shrink: 0; display: flex; align-items: center; padding: 0 10px;
+  background: var(--side); border-right: 1px solid var(--line);
+}
+.window-titlebar-left .brand { padding: 0; font-size: 13px; color: var(--text); }
+.window-titlebar-drag { flex: 1; background: var(--bg); border-bottom: 1px solid var(--line-soft); }
+.app.has-titlebar { padding-top: 34px; }
+.app.has-titlebar .sidebar { padding-top: 8px; }
 .nav-heading { font-size: 11px; color: var(--faint); padding: 14px 10px 3px; letter-spacing: .04em; }
 .nav-item {
   display: flex; align-items: center; gap: 8px; text-align: left;
