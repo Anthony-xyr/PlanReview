@@ -574,6 +574,7 @@ export interface Api {
     hideFloat(): Promise<void>
     resizeFloat(height: number): Promise<void>
     status(): Promise<SystemStatus>
+    platform: string
   }
   settings: {
     get(): Promise<Settings>
