@@ -1,4 +1,4 @@
-# Windows 安装包配置。产物在 dist/ 下
+# Windows / macOS 安装包配置。产物在 dist/ 下
 appId: com.planreview.app
 productName: 计划与复盘
 executableName: PlanReview
@@ -17,11 +17,15 @@ files:
   - '!**/{test,tests,__tests__,docs,doc,example,examples}/**'
   - '!**/*.{md,markdown,ts,tsx,mts,cc,hh,inc,h,c,cpp}'
   - '!**/CMakeLists.txt'
+  # rolldown 的 Windows 原生绑定只是构建工具的可选保险，不能进安装包（21MB）
+  - '!node_modules/@rolldown/binding-win32-x64-msvc/**'
 
 # 图标要在 asar 外面，托盘和系统通知才能读到；koffi 的原生模块也必须在外面才能加载
 asarUnpack:
   - resources/**
   - node_modules/@koromix/koffi-win32-x64/**
+  - node_modules/@koromix/koffi-darwin-arm64/**
+  - node_modules/@koromix/koffi-darwin-x64/**
   - node_modules/koffi/**
 
 electronDownload:
@@ -46,5 +50,25 @@ nsis:
   # 卸载时保留数据库（在 %APPDATA%\plan-review 下，主进程里固定了这个目录），重装后数据还在
   deleteAppDataOnUninstall: false
 
-# 没有代码签名证书，跳过签名
+mac:
+  # 在哪种 Mac 上构建就产出哪种架构：Apple Silicon → arm64，Intel → x64。
+  # 要出通用的 universal 包，需要两套 koffi 预编译模块，暂时不做。
+  target:
+    - target: dmg
+  icon: resources/icon.icns
+  category: public.app-category.productivity
+  artifactName: PlanReview-${version}-${arch}.${ext}
+  darkModeSupport: true
+  # 没有 Developer ID 证书：跳过签名与公证。首次打开需要右键 →「打开」，或执行
+  # xattr -dr com.apple.quarantine /Applications/计划与复盘.app
+  identity: null
+  notarize: false
+  gatekeeperAssess: false
+  extendInfo:
+    NSHumanReadableCopyright: 个人自用
+
+dmg:
+  artifactName: PlanReview-${version}-${arch}.${ext}
+
+# 没有代码签名证书，跳过签名（Windows 上仍会生成未签名的安装包）
 forceCodeSigning: false
