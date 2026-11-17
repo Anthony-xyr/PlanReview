@@ -4,7 +4,7 @@
 
 一款基于 Electron 的桌面应用,帮助你高效管理个人计划、实时追踪时间投入,并通过 AI 深度复盘优化时间利用效率。
 
-![Platform](https://img.shields.io/badge/platform-Windows-blue)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Version](https://img.shields.io/badge/version-0.2.0-orange)
 
@@ -14,7 +14,7 @@
 
 ### 📝 速记收集
 - **悬浮窗快速输入** - 置顶悬浮窗,随时记录灵感
-- **全局快捷键** (Alt+Shift+Space) - 任何场景下快速唤起
+- **全局快捷键** (Windows `Alt+Shift+Space` / macOS `Option+Shift+Space`) - 任何场景下快速唤起
 - **AI 智能解析** - 自动提取日期、估时、类别、标签
 - **纠正与习惯学习** - AI 理解错了可以「纠正」，确认后记住你的写法，以后照着解析
 - **游戏模式** - 全屏时自动隐藏悬浮窗
@@ -55,17 +55,30 @@
 
 ### 环境要求
 
-- Windows 10/11
-- Node.js 22.11+
+- Windows 10/11，或 macOS 13+
+- Node.js 22.12+（仅从源码构建时需要）
 
 ### 安装
 
 #### 方式一: 下载安装包 (推荐)
 
-1. 前往 [Releases](https://github.com/Anthony-xyr/PlanReview/releases) 页面
-2. 下载最新版本的 `PlanReview-Setup-x.x.x.exe`
-3. 运行安装程序
-4. 首次运行时 Windows SmartScreen 会提示"未知发布者",点击"更多信息" → "仍要运行"
+前往 [Releases](https://github.com/Anthony-xyr/PlanReview/releases) 页面下载对应平台的文件。
+
+**Windows**
+
+1. 下载 `PlanReview-Setup-x.x.x.exe`
+2. 运行安装程序
+3. 首次运行时 Windows SmartScreen 会提示"未知发布者",点击"更多信息" → "仍要运行"
+
+**macOS**
+
+1. 下载 `PlanReview-x.x.x-arm64.dmg`（Apple Silicon）或 `PlanReview-x.x.x-x64.dmg`（Intel）
+2. 打开 dmg，把 `PlanReview.app` 拖进「应用程序」（Dock 和菜单栏里显示的名字是「计划与复盘」）
+3. 没有 Apple 开发者签名，首次打开会被 Gatekeeper 拦住。macOS 15 Sequoia 及更新版本（包括 macOS 26）
+   右键「打开」已经不再有效：先点弹窗里的「完成」，再到 **系统设置 → 隐私与安全性**，在安全区域点
+   「仍要打开」。也可以直接在终端执行：
+   `xattr -dr com.apple.quarantine /Applications/PlanReview.app`
+   macOS 14 及更早版本则可以在「应用程序」里右键 →「打开」。
 
 #### 方式二: 从源码构建
 
@@ -83,9 +96,27 @@ npm run dev
 # 构建生产版本
 npm run build
 
-# 打包安装程序
+# 打包当前平台的安装包
 npm run dist
+
+# 或者只打指定平台
+npm run dist:win   # Windows：dist/PlanReview-Setup-x.x.x.exe
+npm run dist:mac   # macOS：dist/PlanReview-x.x.x-<arch>.dmg
 ```
+
+macOS 打包时需要 Xcode Command Line Tools（`xcode-select --install`），dmg 由系统自带的
+`hdiutil` 生成。产物是当前 Mac 的架构：Apple Silicon 出 arm64，Intel 出 x64。
+
+`koffi` 是 Windows 专用的可选依赖。macOS 上安装依赖时如果看到它的安装脚本失败并提示
+`reify failed optional dependency ... koffi`，可以忽略：应用在 macOS 上不会加载它。
+
+构建前要确保环境里没有 `NODE_ENV=production`：它会让 `npm ci` 跳过 devDependencies，
+只装运行时依赖，后面 `npm run build` / `dist` 会失败。PowerShell 用
+`Remove-Item Env:NODE_ENV -ErrorAction SilentlyContinue`，bash 用 `unset NODE_ENV`。
+
+Electron 44 不在 `npm ci` 阶段下载二进制（它的包里没有 postinstall），首次
+`npm run dev` 或 electron-builder 会按需下载。离线环境可以手动执行
+`node node_modules/electron/install.js`，必要时先设置 `ELECTRON_MIRROR`。
 
 ### 首次配置
 
@@ -116,14 +147,34 @@ npm run dist
 
 ### 快捷键
 
-- `Alt+Shift+Space` - 全局唤起速记输入
+- Windows：`Alt+Shift+Space`
+- macOS：`Option+Shift+Space`
+- 可以在设置里改成自己的组合键；macOS 上按 `Command`/`Option` 录制的组合键会自动保存为
+  `Command+...`/`Option+...`
 - 悬浮窗可拖动到任意位置
 
 ### 数据存储
 
-- 数据库位置: `%APPDATA%\plan-review\plan-review.db`
+- Windows：`%APPDATA%\plan-review\plan-review.db`
+- macOS：`~/Library/Application Support/plan-review/plan-review.db`
 - 开发版和安装版共用同一数据库
 - 卸载软件不会删除数据
+
+### 平台差异（macOS）
+
+- **菜单栏图标**：macOS 使用单色模板图标，跟随系统深浅色自动反色；计时中会变成实心图标。
+- **托盘交互**：macOS 点击菜单栏图标直接弹出菜单（第一项是打开主窗口）；Windows 左键直接打开主窗口。
+- **全屏隐藏**：macOS 不申请屏幕录制/辅助功能权限，而是利用系统的全屏桌面（Space）隔离：
+  标准的原生全屏（绿色按钮、Safari/QuickTime 全屏、多数游戏）会进入独立桌面，悬浮窗默认不跟过去；
+  关掉设置里的「全屏应用时隐藏悬浮窗」后，悬浮窗才会显示在全屏内容上面。
+  **无边框全屏**（覆盖整屏但不新建 Space 的部分游戏/网页视频）仍在同一桌面，悬浮窗会保留，
+  macOS 侧不会自动隐藏；要精确检测这类窗口需要屏幕录制权限和额外原生代码。
+  Windows 使用系统通知状态接口检测全屏状态。
+- **开机自启**：macOS 的登录项不接收启动参数，用系统的 `wasOpenedAtLogin` 判断，自启时只显示悬浮窗、不弹主窗口。
+  需要把 `PlanReview.app` 放在「应用程序」里再勾选，系统会把它登记为登录项；放在 Downloads 等位置可能被 macOS 拒绝。
+- **单实例**：两个平台都用 `requestSingleInstanceLock`，重复启动会唤回已有窗口。
+- **系统版本**：安装包的 `LSMinimumSystemVersion` 是 13.0，Electron 44 的框架 `minos` 也是 13.0，
+  所以在 macOS 13 及以上（含 macOS 26 Tahoe）都能运行。当前只在 macOS 15.7 上实测过；macOS 26 未实测。
 
 ## 🛠️ 技术栈
 
@@ -135,7 +186,7 @@ npm run dist
 - **其他依赖**: 
   - xlsx - Excel 解析
   - pdfjs-dist - PDF 处理
-  - koffi - Windows 原生 API 调用
+  - koffi - Windows 原生 API 调用（可选依赖，只在 Windows 上加载；macOS 不需要）
 
 ## 📁 项目结构
 

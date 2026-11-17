@@ -13,7 +13,7 @@ body:
     attributes:
       label: 问题描述
       description: 清晰简洁地描述这个 Bug
-      placeholder: 例如: 当我点击"开始计时"按钮时...
+      placeholder: '例如: 当我点击"开始计时"按钮时...'
     validations:
       required: true
 
@@ -59,7 +59,7 @@ body:
     attributes:
       label: 版本号
       description: 你使用的 PlanReview 版本
-      placeholder: 例如: v0.1.0
+      placeholder: '例如: v0.1.0'
     validations:
       required: true
 
@@ -70,6 +70,8 @@ body:
       options:
         - Windows 11
         - Windows 10
+        - macOS（Apple Silicon / arm64）
+        - macOS（Intel / x64）
         - 其他
     validations:
       required: true
@@ -79,4 +81,4 @@ body:
     attributes:
       label: 补充信息
       description: 其他任何相关信息
-      placeholder: 例如: 是否使用了 AI 功能、数据库大小等
+      placeholder: '例如: 是否使用了 AI 功能、数据库大小等'

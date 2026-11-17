@@ -8,11 +8,11 @@ on:
 
 jobs:
   test:
-    runs-on: windows-latest
-
     strategy:
       matrix:
+        os: [ windows-latest, macos-latest ]
         node-version: [22.x]
+    runs-on: ${{ matrix.os }}
 
     steps:
     - name: Checkout code
