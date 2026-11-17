@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Category, PlanBlock, Settings, TimeEntry } from '@shared/types'
 import { dayOf, dayRange, formatElapsed, hhmm } from '@shared/time'
+import { hotkeyLabel } from '@shared/format'
 import { remainingMin } from '@shared/session'
 import { ReminderCard } from '../components/ReminderCard'
 import { errorText } from '../ui'
+import { platformName } from '../platform'
 import { reminderActions, useReminder } from '../reminderActions'
 import { CaptureConfirm, useSmartCapture } from '../capture'
 
@@ -201,7 +203,7 @@ export function FloatApp() {
       ) : (
         !smart.pending && (
           <div className="float-hint" onClick={() => setCaptureExpanded(true)}>
-            按 {settings?.hotkey || 'Alt+Shift+Space'} 快速记录
+            按 {hotkeyLabel(settings?.hotkey || 'Alt+Shift+Space', platformName)} 快速记录
           </div>
         )
       )}

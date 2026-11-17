@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { Settings, SystemStatus } from '@shared/types'
+import { hotkeyLabel } from '@shared/format'
 import { Dialog } from '../ui'
+import { isMacPlatform, platformName } from '../platform'
 import { AiSettings } from './AiSettings'
 
 interface Props {
@@ -9,11 +11,17 @@ interface Props {
   onClose: () => void
 }
 
-/** 把键盘事件转成 Electron 快捷键写法，如 Alt+Shift+Space */
+/** 把键盘事件转成 Electron 快捷键写法，如 Alt+Shift+Space、Command+Shift+Space */
 function toAccelerator(e: React.KeyboardEvent): string | null {
   const key = e.key
   if (['Control', 'Shift', 'Alt', 'Meta'].includes(key)) return null
-  const mods = [e.ctrlKey && 'Ctrl', e.altKey && 'Alt', e.shiftKey && 'Shift', e.metaKey && 'Super'].filter(Boolean)
+  const mac = isMacPlatform
+  const mods = [
+    e.ctrlKey && 'Ctrl',
+    e.altKey && (mac ? 'Option' : 'Alt'),
+    e.shiftKey && 'Shift',
+    e.metaKey && (mac ? 'Command' : 'Super')
+  ].filter(Boolean)
   if (!mods.length) return null
   const name = key === ' ' ? 'Space' : key.length === 1 ? key.toUpperCase() : key
   return [...mods, name].join('+')
@@ -200,14 +208,19 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
           </label>
           <label className="check">
             <input type="checkbox" checked={form.hideInFullscreen} onChange={(e) => set('hideInFullscreen', e.target.checked)} />
-            全屏游戏或视频时自动隐藏
-            {status && !status.fullscreenDetection && <span className="hint-error">（这台电脑上检测不到全屏状态）</span>}
+            {isMacPlatform ? '全屏应用时隐藏悬浮窗' : '全屏游戏或视频时自动隐藏'}
+            {!isMacPlatform && status && !status.fullscreenDetection && (
+              <span className="hint-error">（这台电脑上检测不到全屏状态）</span>
+            )}
           </label>
+          {isMacPlatform && (
+            <small className="muted">全屏应用会占一个独立桌面，悬浮窗默认不会跟过去；关掉这项后才会显示在全屏内容上面。</small>
+          )}
           <label className="field">
             <span>速记快捷键</span>
             <input
               readOnly
-              value={recording ? '按下新的组合键…' : form.hotkey}
+              value={recording ? '按下新的组合键…' : hotkeyLabel(form.hotkey, platformName)}
               onFocus={() => setRecording(true)}
               onBlur={() => setRecording(false)}
               onKeyDown={(e) => {
@@ -221,9 +234,13 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
                 }
               }}
             />
-            <small className="muted">点进输入框后按下组合键（需要带 Ctrl / Alt / Shift）。</small>
+            <small className="muted">
+              {isMacPlatform
+                ? '点进输入框后按下组合键（需要带 Command / Option / Shift）。'
+                : '点进输入框后按下组合键（需要带 Ctrl / Alt / Shift）。'}
+            </small>
             {status && !status.hotkeyRegistered && form.hotkey === settings.hotkey && (
-              <small className="hint-error">「{settings.hotkey}」被其他程序占用了，换一个试试。</small>
+              <small className="hint-error">「{hotkeyLabel(settings.hotkey, platformName)}」被其他程序占用了，换一个试试。</small>
             )}
           </label>
           <label className="check">

@@ -26,3 +26,13 @@ export function todayLocal(): string {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
+
+/** 把 Electron 快捷键写法转成界面上的叫法：macOS 上 Alt 叫 Option，Super/Cmd 叫 Command */
+export function hotkeyLabel(acc: string, platform: string): string {
+  if (platform !== 'darwin') return acc
+  const names: Record<string, string> = { Alt: 'Option', Option: 'Option', Super: 'Command', Cmd: 'Command', Command: 'Command' }
+  return acc
+    .split('+')
+    .map((part) => names[part] ?? part)
+    .join('+')
+}
