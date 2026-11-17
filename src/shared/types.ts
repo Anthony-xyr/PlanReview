@@ -483,7 +483,9 @@ export interface PlanSuggestion {
 
 export interface SystemStatus {
   hotkeyRegistered: boolean
+  /** Windows 上靠系统接口检测；macOS 由系统的全屏桌面（Space）天然隔离，不需要检测 */
   fullscreenDetection: boolean
+  platform: 'win32' | 'darwin' | 'linux'
 }
 
 export interface TaskInput {

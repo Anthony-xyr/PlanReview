@@ -46,7 +46,7 @@
   --chart-plan: #1f1e1b;
   --float-bg: rgba(255, 255, 255, 0.9);
   --float-line: rgba(0, 0, 0, 0.1);
-  font-family: 'Segoe UI', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei UI', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
   font-size: 14px;
   color: var(--text);
   background: var(--bg);
