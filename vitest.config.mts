@@ -6,7 +6,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts'],
-    // 本机 Node 22.11 的 node:sqlite 还需要实验开关；Electron 内置的 Node 24 不需要
+    // Node 22.x 的早期版本仍需要为 node:sqlite 打开实验开关。
     execArgv: ['--experimental-sqlite', '--no-warnings']
   }
 })

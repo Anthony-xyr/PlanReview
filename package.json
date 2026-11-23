@@ -2,6 +2,9 @@
   "name": "plan-review",
   "version": "0.2.0",
   "private": true,
+  "engines": {
+    "node": "^22.13.0 || ^24.0.0 || >=26.0.0"
+  },
   "description": "个人计划与时间复盘助手",
   "main": "out/main/index.js",
   "scripts": {
