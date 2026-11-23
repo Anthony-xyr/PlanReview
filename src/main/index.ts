@@ -16,6 +16,7 @@ import type {
   SystemStatus
 } from '@shared/types'
 import { dayRange } from '@shared/time'
+import { hotkeyLabel } from '@shared/format'
 import { migrate } from './db/schema'
 import { Repo } from './db/repo'
 import { TimeRepo, sleepWindow } from './db/timeRepo'
@@ -36,6 +37,8 @@ import { TimerWindow } from './timerWindow'
 
 const FLOAT_WIDTH = 320
 const TICK_MS = 15_000
+const isMac = process.platform === 'darwin'
+const isWindows = process.platform === 'win32'
 
 let repo: Repo
 let time: TimeRepo
@@ -60,9 +63,23 @@ let lastRunningId: string | null = null
 let fullscreenNow = false
 let lastReminderSig: string | null = null
 let tickInterval: ReturnType<typeof setInterval> | undefined
+/** macOS 启动时（含开机自启）系统可能立刻发 activate，别让它把本来要隐藏的主窗口叫出来 */
+let suppressActivateUntil = 0
 
 // 打包后 resources/ 解压在 app.asar.unpacked 里，托盘和系统通知能直接读到图标文件
 const resource = (name: string) => join(app.getAppPath().replace(/app\.asar$/, 'app.asar.unpacked'), 'resources', name)
+
+const trayIconCache = new Map<string, Electron.NativeImage>()
+/** macOS 菜单栏用单色模板图（深浅色自动反色）；Windows 继续用带颜色的托盘图 */
+function trayIcon(kind: 'idle' | 'running'): Electron.NativeImage {
+  const file = isMac ? (kind === 'running' ? 'tray-running-template.png' : 'tray-template.png') : kind === 'running' ? 'tray-running.png' : 'tray.png'
+  const cached = trayIconCache.get(file)
+  if (cached) return cached
+  const img = nativeImage.createFromPath(resource(file))
+  if (isMac) img.setTemplateImage(true)
+  trayIconCache.set(file, img)
+  return img
+}
 
 function openDatabase(): void {
   const db = new DatabaseSync(join(app.getPath('userData'), 'plan-review.db'))
@@ -300,7 +317,11 @@ function registerIpc(): void {
       floatWin.setMinimumSize(w, 60)
       floatWin.setBounds({ x: b.x, y: b.y, width: w, height: h })
     },
-    'win:status': (): SystemStatus => ({ hotkeyRegistered, fullscreenDetection: isFullscreenAppActive() !== null })
+    'win:status': (): SystemStatus => ({
+      hotkeyRegistered,
+      fullscreenDetection: isFullscreenAppActive() !== null,
+      platform: process.platform === 'win32' ? 'win32' : isMac ? 'darwin' : 'linux'
+    })
   }
   for (const [channel, fn] of Object.entries(handlers)) {
     ipcMain.handle(channel, (e, ...args) => {
@@ -409,7 +430,9 @@ function createMainWindow(): void {
     webPreferences: webPreferences()
   })
   mainWin.once('ready-to-show', () => {
-    if (!process.argv.includes('--hidden')) mainWin?.show()
+    // 开机自启：Windows 传 --hidden；macOS 不支持启动参数，用系统给的 wasOpenedAtLogin 判断
+    const atLogin = isMac && app.getLoginItemSettings().wasOpenedAtLogin
+    if (!process.argv.includes('--hidden') && !atLogin) mainWin?.show()
   })
   // 外部链接交给系统浏览器
   mainWin.webContents.setWindowOpenHandler(({ url }) => {
@@ -535,10 +558,64 @@ function watchTheme(): void {
   nativeTheme.on('updated', syncMainWindowTheme)
 }
 
+/** macOS 的全局菜单栏：Electron 默认菜单是英文的，这里换成中文，并保留编辑/窗口的标准角色 */
+function createAppMenu(): void {
+  if (!isMac) return
+  const template: Electron.MenuItemConstructorOptions[] = [
+    {
+      label: app.getName(),
+      submenu: [
+        { role: 'about', label: '关于计划与复盘' },
+        { type: 'separator' },
+        { role: 'hide', label: '隐藏计划与复盘' },
+        { role: 'hideOthers', label: '隐藏其他' },
+        { role: 'unhide', label: '显示全部' },
+        { type: 'separator' },
+        { role: 'quit', label: '退出计划与复盘' }
+      ]
+    },
+    {
+      label: '编辑',
+      submenu: [
+        { role: 'undo', label: '撤销' },
+        { role: 'redo', label: '重做' },
+        { type: 'separator' },
+        { role: 'cut', label: '剪切' },
+        { role: 'copy', label: '复制' },
+        { role: 'paste', label: '粘贴' },
+        { role: 'selectAll', label: '全选' }
+      ]
+    },
+    {
+      label: '窗口',
+      submenu: [
+        { role: 'minimize', label: '最小化' },
+        { role: 'zoom', label: '缩放' },
+        { role: 'close', label: '关闭窗口' },
+        { type: 'separator' },
+        { label: '打开主窗口', click: showMain },
+        { role: 'front', label: '前置全部窗口' }
+      ]
+    },
+    {
+      label: '帮助',
+      submenu: [
+        {
+          label: '项目主页',
+          click: () => shell.openExternal('https://github.com/Anthony-xyr/PlanReview')
+        }
+      ]
+    }
+  ]
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+}
+
 function createTray(): void {
-  tray = new Tray(nativeImage.createFromPath(resource('tray.png')))
+  tray = new Tray(trayIcon('idle'))
   tray.setToolTip('计划与复盘')
-  tray.on('click', showMain)
+  // macOS 上点击托盘图标会直接弹出菜单（菜单第一项就是打开主窗口）；Windows 左键直接开窗口
+  if (isMac) tray.setIgnoreDoubleClickEvents(true)
+  else tray.on('click', showMain)
   updateTray()
 }
 
@@ -547,12 +624,12 @@ function updateTray(): void {
   const running = time.running()
   const s = time.getSettings()
   const floatShown = desktopVisibility(s, running !== null, fullscreenNow, floatIntent, center.get()).float
-  tray.setImage(nativeImage.createFromPath(resource(running ? 'tray-running.png' : 'tray.png')))
+  tray.setImage(trayIcon(running ? 'running' : 'idle'))
   tray.setToolTip(running ? `计时中：${running.title}` : '计划与复盘')
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: '打开主窗口', click: showMain },
-      { label: `速记（${s.hotkey}）`, click: toggleCapture },
+      { label: `速记（${hotkeyLabel(s.hotkey, process.platform)}）`, click: toggleCapture },
       {
         label: floatShown ? '隐藏悬浮窗' : '显示悬浮窗',
         click: () => (floatShown ? concealFloat() : revealFloat())
@@ -586,7 +663,17 @@ function applySettings(s: Settings): void {
     }
     registeredHotkey = hotkeyRegistered ? s.hotkey : ''
   }
-  if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: s.launchAtLogin, args: ['--hidden'] })
+  if (app.isPackaged) {
+    // 只在状态变化时写系统登录项：每次启动都写的话，未签名的包会被 macOS 拒绝并打一条错误。
+    // Windows 的登录项带 --hidden 参数；读取时必须传入同一组 args，否则 Electron 会认为
+    // 该项不存在，取消勾选时就不会删除 Run 值。
+    const current = app.getLoginItemSettings(isMac ? undefined : { args: ['--hidden'] }).openAtLogin
+    if (current !== s.launchAtLogin) {
+      // macOS 的登录项不接收启动参数，靠 wasOpenedAtLogin 判断；Windows 用 --hidden
+      if (isMac) app.setLoginItemSettings({ openAtLogin: s.launchAtLogin })
+      else app.setLoginItemSettings({ openAtLogin: s.launchAtLogin, args: ['--hidden'] })
+    }
+  }
   // 界面的深浅色走 CSS 的 prefers-color-scheme，这里定下它取系统的还是固定一种
   nativeTheme.themeSource = s.theme
   syncMainWindowTheme()
@@ -630,7 +717,8 @@ function notify(r: Reminder, s: Settings): void {
     body: r.body,
     silent: !(r.strong && s.strongSound),
     urgency: r.strong ? 'critical' : 'normal',
-    icon: resource('icon.png')
+    // macOS 的通知不读自定义图标，直接显示应用图标
+    ...(isMac ? {} : { icon: resource('icon.png') })
   })
   n.on('click', () => (time.getSettings().floatingEnabled ? revealFloat() : showMain()))
   n.show()
@@ -638,7 +726,8 @@ function notify(r: Reminder, s: Settings): void {
 
 // ---------- 启动 ----------
 
-// 开发版和安装版用同一个数据目录（%APPDATA%\plan-review），装好后之前的数据还在。
+// 开发版和安装版用同一个数据目录：Windows 在 %APPDATA%\plan-review，macOS 在
+// ~/Library/Application Support/plan-review，装好后之前的数据还在。
 // 要在 requestSingleInstanceLock 之前设，单实例锁也放在这个目录里
 app.setPath('userData', join(app.getPath('appData'), 'plan-review'))
 
@@ -648,7 +737,13 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', showMain)
 
   app.whenReady().then(() => {
-    app.setAppUserModelId('plan-review')
+    if (isWindows) app.setAppUserModelId('plan-review')
+    // 开发时 Dock 默认是 Electron 的图标，换成应用自己的；打包后由 .icns 决定
+    if (isMac && !app.isPackaged) app.dock?.setIcon(resource('icon.png'))
+    if (process.argv.includes('--hidden') || (isMac && app.getLoginItemSettings().wasOpenedAtLogin)) {
+      suppressActivateUntil = Date.now() + 3000
+    }
+    createAppMenu()
     openDatabase()
     registerIpc()
     const settings = time.getSettings()
@@ -660,6 +755,12 @@ if (!app.requestSingleInstanceLock()) {
     applySettings(settings)
     tick()
     tickInterval = setInterval(tick, TICK_MS)
+  })
+
+  // macOS：点 Dock 图标时把主窗口叫回来（窗口被缩到托盘后也有效）
+  if (isMac) app.on('activate', () => {
+    if (Date.now() < suppressActivateUntil) return
+    showMain()
   })
 
   app.on('before-quit', () => (quitting = true))
