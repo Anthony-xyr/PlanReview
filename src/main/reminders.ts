@@ -2,6 +2,8 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { PlanBlock, Reminder, ReminderKind, Settings, TimeEntry } from '@shared/types'
 import type { TimeRepo } from './db/timeRepo'
 import { nextClock, sleepWindow } from './db/timeRepo'
+import { BLOCK_END_GRACE_MS, blockEndDue, blockEndKey, rememberDismissal } from './reminderDismissals'
+import { dayOf, dayRange } from '@shared/time'
 
 /**
  * 提醒规则（纯逻辑，不碰窗口）。
@@ -21,8 +23,14 @@ export interface Snapshot {
   now: Date
   settings: Settings
   running: TimeEntry | null
-  /** 今天剩下的计划（含正在进行的） */
+  /** 今天的计划，以及日界前仍在提醒有效期内的计划 */
   blocks: PlanBlock[]
+}
+
+export function reminderSnapshot(time: TimeRepo, now: Date, settings = time.getSettings()): Snapshot {
+  const { start, end } = dayRange(dayOf(now, settings.dayStartHour), settings.dayStartHour)
+  const from = new Date(Math.min(start.getTime(), now.getTime() - BLOCK_END_GRACE_MS))
+  return { now, settings, running: time.running(), blocks: time.listBlocks(from.toISOString(), new Date(end.getTime() + 6 * 3_600_000).toISOString()) }
 }
 
 interface Candidate {
@@ -136,10 +144,10 @@ export function candidates(s: Snapshot): Candidate[] {
         })
       }
 
-      // 保留时段（娱乐等）结束：没有任务的计划块到点提醒
-      if (!b.taskId && now >= end && now.getTime() - end.getTime() < 30 * MIN) {
+      // 正在计时的保留时段只用本次到点提醒（目标可能已延长）
+      if (!b.taskId && !isCurrentWork && blockEndDue(end, now)) {
         out.push({
-          key: `block-end:${b.id}:${b.endAt}`,
+          key: blockEndKey(b.id, b.endAt),
           group: `block-end:${b.id}`,
           kind: 'block-end',
           strong: false,
@@ -177,9 +185,7 @@ export class ReminderCenter {
   }
 
   private remember(scope: 'once' | 'group', value: string): void {
-    this.db
-      .prepare('INSERT OR IGNORE INTO reminder_dismissals (scope, value, created_at) VALUES (?, ?, ?)')
-      .run(scope, value, this.now().toISOString())
+    rememberDismissal(this.db, scope, value, this.now())
   }
 
   /** 计算当前提醒；返回值变化时需要通知界面 */
@@ -187,9 +193,11 @@ export class ReminderCenter {
     const t = s.now.getTime()
     for (const [k, until] of this.snoozed) if (until <= t) this.snoozed.delete(k)
 
-    const pick = candidates(s).find(
-      (c) => !this.dismissedKeys.has(c.key) && !this.dismissedGroups.has(c.group) && !this.snoozed.has(c.group)
-    )
+    const pick = candidates(s).find((c) => {
+      if (this.dismissedKeys.has(c.key) || this.dismissedGroups.has(c.group) || this.snoozed.has(c.group)) return false
+      // 结束计时时 TimeRepo 可以写入新的关闭记录，不能只用启动时加载的集合。
+      return c.kind !== 'block-end' || !this.db.prepare("SELECT 1 FROM reminder_dismissals WHERE scope = 'once' AND value = ?").get(c.key)
+    })
     if (!pick) {
       this.current = null
       return null

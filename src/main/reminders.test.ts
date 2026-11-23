@@ -1,9 +1,9 @@
 import { DatabaseSync } from 'node:sqlite'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { migrate } from './db/schema'
 import { Repo } from './db/repo'
 import { DEFAULT_SETTINGS, nextClock, sleepWindow, TimeRepo } from './db/timeRepo'
-import { candidates, ReminderCenter, type Snapshot } from './reminders'
+import { candidates, ReminderCenter, reminderSnapshot, type Snapshot } from './reminders'
 
 // 测试用本地时间
 const local = (h: number, m = 0, dayOffset = 0) => new Date(2026, 9, 15 + dayOffset, h, m)
@@ -21,6 +21,8 @@ beforeEach(() => {
   time = new TimeRepo(db, () => clock)
 })
 
+afterEach(() => db.close())
+
 const snap = (over: Partial<Snapshot> = {}): Snapshot => ({
   now: clock,
   settings: time.getSettings(),
@@ -33,6 +35,129 @@ const kinds = (s: Snapshot) => candidates(s).map((c) => c.kind)
 
 /** 每次新建都从数据库读关闭记录，相当于重启软件 */
 const newCenter = () => new ReminderCenter(time, db, () => clock)
+
+describe('自由计划块与本次计时', () => {
+  const reserve = (title = '推进研究', end = local(15)) =>
+    time.createBlock({ title, startAt: local(14).toISOString(), endAt: end.toISOString() })
+  const startBlock = (b: ReturnType<typeof reserve>) => time.start({ title: b.title, planBlockId: b.id })
+
+  it('延长后不在原计划结束时提醒，新的目标时刻只提示 session-end', () => {
+    const b = reserve()
+    const center = newCenter()
+    startBlock(b)
+    clock = local(14, 58)
+    expect(time.extend(15).targetEndAt).toBe(local(15, 15).toISOString())
+
+    clock = local(15)
+    expect(kinds(snap())).toEqual([])
+    expect(center.evaluate(snap())).toBeNull()
+    clock = local(15, 15)
+    expect(kinds(snap())).toEqual(['session-end'])
+    expect(center.evaluate(snap())?.kind).toBe('session-end')
+    clock = local(15, 16)
+    expect(time.stop({}).entry?.endAt).toBe(clock.toISOString())
+    expect(center.evaluate(snap())).toBeNull()
+    expect(newCenter().evaluate(snap())).toBeNull()
+    expect(time.getBlock(b.id)?.endAt).toBe(local(15).toISOString())
+  })
+
+  it('未延长的计时在原结束时也只提示 session-end', () => {
+    startBlock(reserve())
+    clock = local(15)
+    expect(kinds(snap())).toEqual(['session-end'])
+  })
+
+  it.each(['停止', '切换'])('没经过原结束时的 tick，%s后也不补弹', (action) => {
+    const center = newCenter()
+    const b = reserve()
+    startBlock(b)
+    time.extend(15)
+    clock = local(15, 10)
+    if (action === '停止') time.stop({})
+    else time.start({ title: '另一件事' })
+    expect(center.evaluate(snap())).toBeNull()
+    expect(newCenter().evaluate(snap())).toBeNull()
+  })
+
+  it('到点停止且计时不足一分钟，丢弃记录时仍不补弹', () => {
+    const b = reserve()
+    const center = newCenter()
+    clock = new Date(local(15).getTime() - 20_000)
+    startBlock(b)
+    clock = local(15)
+    expect(time.stop({})).toEqual({ entry: null, discarded: true })
+    expect(center.evaluate(snap())).toBeNull()
+  })
+
+  it('停止后原提醒的关闭不影响后来改了结束时间的同一个计划', () => {
+    const b = reserve()
+    const center = newCenter()
+    startBlock(b)
+    clock = local(15, 10)
+    time.stop({})
+    time.updateBlock(b.id, { endAt: local(15, 20).toISOString() })
+    clock = local(15, 20)
+    expect(center.evaluate(snap())?.id).toBe(`block-end:${b.id}:${clock.toISOString()}`)
+  })
+
+  it('只跳过计时对应的块，另一个同名计划依然提醒', () => {
+    startBlock(reserve())
+    time.extend(15)
+    const other = reserve()
+    clock = local(15)
+    expect(newCenter().evaluate(snap())?.blockId).toBe(other.id)
+  })
+
+  it('提前停止后仍正常提醒，满 30 分钟后窗口关闭', () => {
+    const b = reserve()
+    const center = newCenter()
+    startBlock(b)
+    clock = local(14, 59)
+    time.stop({})
+    expect(center.evaluate(snap())).toBeNull()
+    clock = local(15)
+    expect(center.evaluate(snap())?.blockId).toBe(b.id)
+    clock = local(15, 29)
+    expect(center.evaluate(snap())?.kind).toBe('block-end')
+    clock = local(15, 30)
+    expect(center.evaluate(snap())).toBeNull()
+  })
+
+  it('从选择器提前启动跨零点自由计划，延长到新目标且不补弹', () => {
+    time.updateSettings({ dayStartHour: 0, leaveEnabled: false, sleepStart: '03:00', sleepEnd: '04:00', sleepLeadMin: 0 })
+    clock = local(23, 40)
+    const block = time.createBlock({ title: '跨日计划', startAt: local(23, 55).toISOString(), endAt: local(0, 10, 1).toISOString() })
+    // 悬浮窗提前开始传原时长和 planBlockId，不改计划时段。
+    const started = time.start({ title: block.title, planBlockId: block.id, durationMin: 15 })
+    expect(started.targetEndAt).toBe(local(23, 55).toISOString())
+    clock = local(23, 54)
+    expect(time.extend(25).targetEndAt).toBe(local(0, 20, 1).toISOString())
+    clock = local(0, 10, 1)
+    const center = newCenter()
+    expect(center.evaluate(reminderSnapshot(time, clock))).toBeNull()
+    clock = local(0, 20, 1)
+    expect(center.evaluate(reminderSnapshot(time, clock))?.kind).toBe('session-end')
+    time.stop({})
+    expect(newCenter().evaluate(reminderSnapshot(time, clock))).toBeNull()
+    expect(time.getBlock(block.id)?.endAt).toBe(block.endAt)
+  })
+
+  it('越过自定义日界时仍检查前半小时的块，只跳过实际计时过的块', () => {
+    time.updateSettings({ dayStartHour: 5, leaveEnabled: false, sleepStart: '03:00', sleepEnd: '04:00', sleepLeadMin: 0 })
+    clock = local(4, 40)
+    const target = time.createBlock({ title: '提前开始', startAt: local(4, 42).toISOString(), endAt: local(4, 55).toISOString() })
+    const other = time.createBlock({ title: '没开始', startAt: local(4, 43).toISOString(), endAt: local(4, 56).toISOString() })
+    time.start({ title: target.title, planBlockId: target.id, durationMin: 13 })
+    time.extend(15)
+    clock = local(5, 5)
+    const center = newCenter()
+    expect(center.evaluate(reminderSnapshot(time, clock))?.blockId).toBe(other.id)
+    time.stop({})
+    expect(newCenter().evaluate(reminderSnapshot(time, clock))?.blockId).toBe(other.id)
+    clock = local(5, 26)
+    expect(center.evaluate(reminderSnapshot(time, clock))).toBeNull()
+  })
+})
 
 describe('clock helpers', () => {
   it('nextClock 取下一次出现', () => {
