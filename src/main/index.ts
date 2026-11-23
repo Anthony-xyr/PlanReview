@@ -31,6 +31,8 @@ import { parseSchedule } from './ai/schedule'
 import { WeeklyRepo } from './db/weeklyRepo'
 import { askWeekly, generateWeekly, weekContextText, type WeekContext } from './ai/weekly'
 import { freeGaps, suggestPlan } from './ai/planner'
+import { desktopVisibility, floatIntentAfterReminder, floatIntentAfterTimerChange, type FloatIntent } from './desktopWindows'
+import { TimerWindow } from './timerWindow'
 
 const FLOAT_WIDTH = 320
 const TICK_MS = 15_000
@@ -49,9 +51,15 @@ let tray: Tray | null = null
 let quitting = false
 let hotkeyRegistered = false
 let registeredHotkey = ''
-let floatHiddenByUser = false
+let floatIntent: FloatIntent = 'auto'
+let floatReady = false
+let floatBridgeReady = false
+let focusCaptureWhenReady = false
+let floatOverMacFullscreen: boolean | undefined
+let lastRunningId: string | null = null
 let fullscreenNow = false
 let lastReminderSig: string | null = null
+let tickInterval: ReturnType<typeof setInterval> | undefined
 
 // 打包后 resources/ 解压在 app.asar.unpacked 里，托盘和系统通知能直接读到图标文件
 const resource = (name: string) => join(app.getAppPath().replace(/app\.asar$/, 'app.asar.unpacked'), 'resources', name)
@@ -182,7 +190,7 @@ function sendCommand(cmd: MainCommand): void {
 
 // 只读通道不触发刷新
 const READ_ONLY = new Set([
-  'tasks:list', 'tasks:get', 'tasks:lineage', 'categories:list', 'tags:list', 'plan:list',
+  'tasks:list', 'tasks:get', 'tasks:lineage', 'categories:list', 'tags:list', 'plan:list', 'plan:startedIds',
   'entries:list', 'entries:running', 'settings:get', 'reminders:current', 'win:status',
   'ai:getConfig', 'ai:test', 'ai:parseCapture', 'ai:reparseCapture', 'ai:parseSchedule', 'courses:list', 'habits:list',
   // 首次调用会定下当天的随机推送，但界面上没有可见变化
@@ -208,6 +216,7 @@ function registerIpc(): void {
     'categories:openCounts': () => repo.openCountByCategory(),
     'tags:list': () => repo.listTags(),
     'plan:list': (from: string, to: string) => time.listBlocks(from, to),
+    'plan:startedIds': (from: string, to: string) => time.startedBlockIds(from, to),
     'plan:create': (input) => time.createBlock(input),
     'plan:update': (id: string, patch) => time.updateBlock(id, patch),
     'plan:remove': (id: string) => time.deleteBlock(id),
@@ -223,7 +232,12 @@ function registerIpc(): void {
     'entries:setReason': (id: string, reason) => time.setReason(id, reason),
     'settings:get': () => time.getSettings(),
     'settings:update': (patch: Partial<Settings>) => {
+      const previousFloatingEnabled = time.getSettings().floatingEnabled
       const s = time.updateSettings(patch)
+      if (s.floatingEnabled !== previousFloatingEnabled) {
+        floatIntent = 'auto'
+        focusCaptureWhenReady = false
+      }
       applySettings(s)
       return s
     },
@@ -269,16 +283,14 @@ function registerIpc(): void {
     'reminders:dismiss': (id: string, scope?: 'once' | 'group') => center.dismiss(id, scope),
     'reminders:snooze': (id: string, min: number) => center.snooze(id, min, new Date()),
     'win:openMain': (cmd?: MainCommand) => (cmd ? sendCommand(cmd) : showMain()),
-    'win:showFloat': () => {
-      floatHiddenByUser = false
-      updateFloatVisibility()
-    },
-    'win:hideFloat': () => {
-      floatHiddenByUser = true
-      updateFloatVisibility()
+    'win:showFloat': () => revealFloat(),
+    'win:hideFloat': concealFloat,
+    'win:floatReady': () => {
+      floatBridgeReady = true
+      focusCapture()
     },
     'win:resizeFloat': (height: number) => {
-      if (!floatWin || floatWin.isDestroyed()) return
+      if (!floatWin || floatWin.isDestroyed() || !Number.isFinite(height)) return
       const [w] = floatWin.getSize()
       const h = Math.max(60, Math.min(600, Math.round(height)))
       // 不可调大小的透明窗口在 Windows 上 setSize 只会变高、不会变矮，改用 setBounds 并放开最小尺寸
@@ -291,11 +303,23 @@ function registerIpc(): void {
   }
   for (const [channel, fn] of Object.entries(handlers)) {
     ipcMain.handle(channel, (e, ...args) => {
+      if (timerWindow.owns(e.sender)) throw new Error('该窗口不能使用此通道')
+      if (channel === 'win:resizeFloat' || channel === 'win:floatReady') {
+        if (e.sender !== floatWin?.webContents || e.senderFrame !== e.sender.mainFrame) throw new Error('仅悬浮窗可使用此通道')
+      }
       const result = (fn as (...a: unknown[]) => unknown)(...args)
       if (!READ_ONLY.has(channel) && !channel.startsWith('win:')) dataChanged(e.sender)
       return result
     })
   }
+  ipcMain.handle('timer:state', (e) => {
+    if (!timerWindow.accepts(e)) throw new Error('仅顶部计时器可使用此通道')
+    return timerWindow.snapshot()
+  })
+  ipcMain.handle('timer:resize', (e, width: number) => {
+    if (!timerWindow.accepts(e)) throw new Error('仅顶部计时器可使用此通道')
+    timerWindow.resize(width)
+  })
 }
 
 // ---------- 窗口 ----------
@@ -305,6 +329,11 @@ const webPreferences = (): Electron.WebPreferences => ({
   contextIsolation: true,
   sandbox: true
 })
+
+const timerWindow = new TimerWindow(
+  () => ({ ...webPreferences(), additionalArguments: ['--planreview-timer'] }),
+  loadRenderer
+)
 
 async function waitForDevServer(url: string, maxRetries = 30): Promise<boolean> {
   const http = await import('node:http')
@@ -386,7 +415,7 @@ function showMain(): void {
 
 function createFloatWindow(): void {
   const area = screen.getPrimaryDisplay().workArea
-  floatWin = new BrowserWindow({
+  const win = new BrowserWindow({
     width: FLOAT_WIDTH,
     height: 120,
     x: area.x + area.width - FLOAT_WIDTH - 16,
@@ -402,37 +431,80 @@ function createFloatWindow(): void {
     title: '计划与复盘 · 悬浮窗',
     webPreferences: webPreferences()
   })
-  floatWin.setAlwaysOnTop(true, 'floating')
-  floatWin.on('closed', () => (floatWin = null))
-  floatWin.once('ready-to-show', updateFloatVisibility)
-  loadRenderer(floatWin, '#float')
+  floatWin = win
+  win.setAlwaysOnTop(true, 'floating')
+  win.webContents.on('did-start-loading', () => { floatBridgeReady = false })
+  win.webContents.once('render-process-gone', () => win.destroy())
+  win.once('closed', () => {
+    floatWin = null
+    floatReady = false
+    floatBridgeReady = false
+    floatOverMacFullscreen = undefined
+  })
+  win.once('ready-to-show', () => {
+    floatReady = true
+    updateDesktopVisibility()
+  })
+  void loadRenderer(win, '#float').catch((err: unknown) => {
+    if (win.isDestroyed()) return
+    console.error('Failed to load the floating window', err)
+    win.destroy()
+  })
 }
 
-function updateFloatVisibility(): void {
-  const s = time.getSettings()
-  if (!s.floatingEnabled) {
-    floatWin?.destroy()
-    return
+function updateDesktopVisibility(s = time.getSettings(), running = time.running(), reminder = center.get()): void {
+  if (quitting) return
+  const runningId = running?.id ?? null
+  if (runningId !== lastRunningId) focusCaptureWhenReady = false
+  floatIntent = floatIntentAfterTimerChange(floatIntent, lastRunningId, runningId)
+  lastRunningId = runningId
+  const visible = desktopVisibility(s, running !== null, fullscreenNow, floatIntent, reminder)
+  timerWindow.update(running, visible.timer, s.hideInFullscreen)
+
+  if (!visible.float) {
+    if (!s.floatingEnabled) floatWin?.destroy()
+    else floatWin?.hide()
+  } else if (!floatWin) {
+    createFloatWindow()
+  } else if (floatReady) {
+    if (process.platform === 'darwin') {
+      const allowOnFullscreen = !s.hideInFullscreen || floatIntent === 'show' || reminder?.strong === true
+      if (allowOnFullscreen !== floatOverMacFullscreen) {
+        floatOverMacFullscreen = allowOnFullscreen
+        floatWin.setAlwaysOnTop(true, allowOnFullscreen ? 'screen-saver' : 'floating')
+        floatWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: allowOnFullscreen, skipTransformProcessType: true })
+      }
+    }
+    if (!floatWin.isVisible()) floatWin.showInactive()
+    focusCapture()
   }
-  if (!floatWin || floatWin.isDestroyed()) return createFloatWindow()
-  const reminder = center.get()
-  // 全屏时隐藏；但强提醒（睡眠）仍然要露面
-  const hide = floatHiddenByUser || (s.hideInFullscreen && fullscreenNow && !reminder?.strong)
-  if (hide) floatWin.hide()
-  else if (!floatWin.isVisible()) floatWin.showInactive()
+}
+
+function focusCapture(): void {
+  if (!focusCaptureWhenReady || !floatReady || !floatBridgeReady || !floatWin?.isVisible()) return
+  focusCaptureWhenReady = false
+  floatWin.show()
+  floatWin.focus()
+  floatWin.webContents.send('focus-capture')
+}
+
+function revealFloat(capture = false): void {
+  floatIntent = 'show'
+  focusCaptureWhenReady = capture
+  updateDesktopVisibility()
+  updateTray()
+}
+
+function concealFloat(): void {
+  floatIntent = 'hide'
+  focusCaptureWhenReady = false
+  updateDesktopVisibility()
+  updateTray()
 }
 
 /** 快捷键：唤出悬浮窗并聚焦速记框 */
 function toggleCapture(): void {
-  floatHiddenByUser = false
-  if (!floatWin || floatWin.isDestroyed()) {
-    createFloatWindow()
-    floatWin!.webContents.once('did-finish-load', () => toggleCapture())
-    return
-  }
-  floatWin.show()
-  floatWin.focus()
-  floatWin.webContents.send('focus-capture')
+  revealFloat(true)
 }
 
 // ---------- 托盘 ----------
@@ -453,6 +525,7 @@ function updateTray(): void {
   if (!tray) return
   const running = time.running()
   const s = time.getSettings()
+  const floatShown = desktopVisibility(s, running !== null, fullscreenNow, floatIntent, center.get()).float
   tray.setImage(nativeImage.createFromPath(resource(running ? 'tray-running.png' : 'tray.png')))
   tray.setToolTip(running ? `计时中：${running.title}` : '计划与复盘')
   tray.setContextMenu(
@@ -460,13 +533,8 @@ function updateTray(): void {
       { label: '打开主窗口', click: showMain },
       { label: `速记（${s.hotkey}）`, click: toggleCapture },
       {
-        label: s.floatingEnabled && !floatHiddenByUser ? '隐藏悬浮窗' : '显示悬浮窗',
-        click: () => {
-          if (!s.floatingEnabled) time.updateSettings({ floatingEnabled: true })
-          else floatHiddenByUser = !floatHiddenByUser
-          updateFloatVisibility()
-          updateTray()
-        }
+        label: floatShown ? '隐藏悬浮窗' : '显示悬浮窗',
+        click: () => (floatShown ? concealFloat() : revealFloat())
       },
       { type: 'separator' },
       ...(running ? [{ label: `结束本次：${running.title}`, click: () => sendCommand('stop') }] : []),
@@ -501,25 +569,28 @@ function applySettings(s: Settings): void {
   // 界面的深浅色走 CSS 的 prefers-color-scheme，这里定下它取系统的还是固定一种
   nativeTheme.themeSource = s.theme
   mainWin?.setBackgroundColor(windowBg())
-  updateFloatVisibility()
-  updateTray()
 }
 
 // ---------- 提醒循环 ----------
 
 function tick(): void {
+  if (quitting) return
   const now = new Date()
   const settings = time.getSettings()
+  const running = time.running()
   const { start, end } = dayRange(dayOf(now, settings.dayStartHour), settings.dayStartHour)
   const reminder = center.evaluate({
     now,
     settings,
-    running: time.running(),
+    running,
     blocks: time.listBlocks(start.toISOString(), new Date(end.getTime() + 6 * 3_600_000).toISOString())
   })
 
   const full = settings.hideInFullscreen ? isFullscreenAppActive() === true : false
-  if (full !== fullscreenNow) fullscreenNow = full
+  if (full !== fullscreenNow) {
+    fullscreenNow = full
+    if (full && floatIntent === 'show') floatIntent = 'auto'
+  }
 
   // 内容变化就重新推送（比如同一个睡眠提醒，开始计时后文字要跟着变）
   const sig = reminder ? JSON.stringify({ ...reminder, fresh: undefined }) : null
@@ -527,8 +598,9 @@ function tick(): void {
     lastReminderSig = sig
     for (const w of allWindows()) w.webContents.send('reminder', reminder)
   }
+  floatIntent = floatIntentAfterReminder(floatIntent, reminder)
+  updateDesktopVisibility(settings, running, reminder)
   if (reminder?.fresh) notify(reminder, settings)
-  updateFloatVisibility()
   updateTray()
 }
 
@@ -544,7 +616,7 @@ function notify(r: Reminder, s: Settings): void {
     urgency: r.strong ? 'critical' : 'normal',
     icon: resource('icon.png')
   })
-  n.on('click', () => (floatVisible ? floatWin?.show() : showMain()))
+  n.on('click', () => (time.getSettings().floatingEnabled ? revealFloat() : showMain()))
   n.show()
 }
 
@@ -568,11 +640,15 @@ if (!app.requestSingleInstanceLock()) {
     watchTheme()
     applySettings(time.getSettings())
     tick()
-    setInterval(tick, TICK_MS)
+    tickInterval = setInterval(tick, TICK_MS)
   })
 
   app.on('before-quit', () => (quitting = true))
-  app.on('will-quit', () => globalShortcut.unregisterAll())
+  app.on('will-quit', () => {
+    clearInterval(tickInterval)
+    timerWindow.dispose()
+    globalShortcut.unregisterAll()
+  })
   // 有托盘时关闭所有窗口也不退出
   app.on('window-all-closed', () => {
     if (!tray) app.quit()

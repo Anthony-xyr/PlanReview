@@ -52,6 +52,18 @@ describe('plan blocks', () => {
     expect(u.title).toBe('a')
     expect(u.endAt).toBe(at('11:30'))
   })
+
+  it('当天计划在前一天提前开始时，也能识别为已开始', () => {
+    const first = time.createBlock({ title: '提前做', startAt: at('14:00'), endAt: at('15:00') })
+    time.createBlock({ title: '未开始', startAt: at('15:00'), endAt: at('16:00') })
+    clock = new Date('2026-10-14T23:00:00.000Z')
+    time.start({ title: first.title, planBlockId: first.id, durationMin: 60 })
+    expect(time.startedBlockIds(at('00:00'), at('23:59'))).toEqual([first.id])
+    clock = new Date('2026-10-14T23:20:00.000Z')
+    time.stop({})
+    expect(time.startedBlockIds(at('00:00'), at('23:59'))).toEqual([first.id])
+    expect(time.startedBlockIds(at('15:00'), at('23:59'))).toEqual([])
+  })
 })
 
 describe('timer', () => {
