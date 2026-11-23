@@ -349,19 +349,17 @@ function getTitleBarOverlayOptions() {
   }
 }
 
-function updateTitleBarTheme(): void {
-  if (!mainWin || mainWin.isDestroyed()) return
-  if (process.platform === 'win32') {
-    try {
-      mainWin.setTitleBarOverlay(getTitleBarOverlayOptions())
-    } catch {
-      // ignore
-    }
-  }
+function syncMainWindowTheme(): void {
+  const win = mainWin
+  if (!win || win.isDestroyed()) return
+  const appearance = getTitleBarOverlayOptions()
+  win.setBackgroundColor(appearance.color)
+  if (process.platform === 'win32') win.setTitleBarOverlay(appearance)
 }
 
 function createMainWindow(): void {
   const isWindows = process.platform === 'win32'
+  const appearance = getTitleBarOverlayOptions()
   mainWin = new BrowserWindow({
     width: 1280,
     height: 820,
@@ -369,13 +367,13 @@ function createMainWindow(): void {
     minHeight: 520,
     title: '计划与复盘',
     icon: resource('icon.png'),
-    backgroundColor: windowBg(),
+    backgroundColor: appearance.color,
     autoHideMenuBar: true,
     show: false,
     ...(isWindows
       ? {
           titleBarStyle: 'hidden' as const,
-          titleBarOverlay: getTitleBarOverlayOptions()
+          titleBarOverlay: appearance
         }
       : {}),
     webPreferences: webPreferences()
@@ -397,11 +395,6 @@ function createMainWindow(): void {
   })
   mainWin.on('closed', () => (mainWin = null))
   loadRenderer(mainWin)
-}
-
-/** 窗口还没画出界面前的底色，和 CSS 里 --bg 一致，免得深色模式下先闪一下白 */
-function windowBg(): string {
-  return nativeTheme.shouldUseDarkColors ? '#1f1f22' : '#fbfbfa'
 }
 
 function showMain(): void {
@@ -466,10 +459,7 @@ function toggleCapture(): void {
 
 function watchTheme(): void {
   // 跟随系统时，系统切换深浅色后主窗口底色也跟着换
-  nativeTheme.on('updated', () => {
-    mainWin?.setBackgroundColor(windowBg())
-    updateTitleBarTheme()
-  })
+  nativeTheme.on('updated', syncMainWindowTheme)
 }
 
 function createTray(): void {
@@ -530,8 +520,7 @@ function applySettings(s: Settings): void {
   if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: s.launchAtLogin, args: ['--hidden'] })
   // 界面的深浅色走 CSS 的 prefers-color-scheme，这里定下它取系统的还是固定一种
   nativeTheme.themeSource = s.theme
-  mainWin?.setBackgroundColor(windowBg())
-  updateTitleBarTheme()
+  syncMainWindowTheme()
   updateFloatVisibility()
   updateTray()
 }
@@ -594,10 +583,13 @@ if (!app.requestSingleInstanceLock()) {
     app.setAppUserModelId('plan-review')
     openDatabase()
     registerIpc()
+    const settings = time.getSettings()
+    // 创建窗口前设置主题，让首帧、页面媒体查询和原生按钮颜色一致。
+    nativeTheme.themeSource = settings.theme
     createMainWindow()
     createTray()
     watchTheme()
-    applySettings(time.getSettings())
+    applySettings(settings)
     tick()
     setInterval(tick, TICK_MS)
   })
