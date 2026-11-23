@@ -474,6 +474,9 @@ html.is-float, html.is-float body { background: transparent; overflow: hidden; }
 .block.is-course { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--c) calc(var(--tint) + 2%), var(--mix)) 0 8px, color-mix(in srgb, var(--c) calc(var(--tint) - 4%), var(--mix)) 8px 16px); }
 .block-loc { font-size: 11px; color: var(--muted); }
 .dialog:has(.import) { width: 900px; max-height: 88vh; }
+.import-date-warning { margin: 10px 0; border-left: 4px solid var(--warn); }
+.import-date-warning strong { display: block; margin-bottom: 4px; }
+.import-confirm-date { padding: 8px 10px; margin: 10px 0; border-radius: 6px; background: var(--warn-soft); }
 
 .dialog:has(.settings) { overflow-y: auto; }
 

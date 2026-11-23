@@ -7,7 +7,7 @@ import { CourseRepo, meetingDate } from '../db/courseRepo'
 import { chat, extractJson, normalizeBaseUrl } from './client'
 import { captureMessages, parseCapture, reparseCapture, reparseMessages, sanitizeCapture, sanitizeReparse } from './capture'
 import { HabitRepo } from '../db/habitRepo'
-import { sanitizeSchedule, scheduleMessages } from './schedule'
+import { inferTermStart, preferHintTermStart, sanitizeSchedule, scheduleMessages } from './schedule'
 import { AiConfigStore, type SecretBox } from './config'
 
 let db: DatabaseSync
@@ -211,6 +211,42 @@ describe('schedule', () => {
     expect(parts[0].text).toContain('9 月 1 日')
   })
 
+  it('提示词带上当前日期，支持从周次倒推第一周', () => {
+    const tuesday = new Date(2026, 10, 10)
+    const msgs = scheduleMessages([], '今天是第11周', tuesday)
+    const text = (msgs[1].content as { type: string; text?: string }[])[0].text!
+    expect(text).toContain('今天是 2026-11-10，星期二')
+    expect(text).toContain('今天是第11周')
+  })
+
+  it.each([
+    ['今天是第11周', new Date(2026, 10, 10), '2026-08-31'],
+    ['本周是第 3 周', new Date(2026, 0, 4, 23), '2025-12-15'],
+    ['目前第5周', new Date(2026, 0, 5), '2025-12-08'],
+    ['本周是第２周', new Date(2024, 2, 3, 23), '2024-02-19'],
+    ['目前是第十一周', new Date(2024, 2, 4), '2023-12-25'],
+    ['第一周从 2024 年 2 月 29 日开始', new Date(2024, 2, 4), '2024-02-26'],
+    ['第 1 周周一是 2025-12-29', new Date(2026, 0, 5), '2025-12-29'],
+    ['12 月 29 日是第一周', new Date(2026, 0, 5), '2025-12-29']
+  ])('确定性推算 %s', (hint, today, termStart) => {
+    expect(inferTermStart(hint, today)?.termStart).toBe(termStart)
+  })
+
+  it('明确日期优先于当前周次，本地说明优先于 AI，并记录不同值', () => {
+    const local = inferTermStart('今天是第2周；第一周从 2026-09-07 开始', new Date(2026, 10, 10))
+    const result = preferHintTermStart(sanitizeSchedule({ termStart: '2026-09-14', notes: ['核对地点'] }), local)
+    expect(result.termStart).toBe('2026-09-07')
+    expect(result.notes.join(' ')).toMatch(/当前周次与开学日期不一致.*AI 给出的第一周周一为 2026-09-14.*核对地点/)
+    expect(preferHintTermStart(sanitizeSchedule({}), local).termStart).toBe('2026-09-07')
+    expect(inferTermStart('周次表上标了第 3 周上课', new Date(2026, 10, 10))).toBeNull()
+    expect(() => inferTermStart('本周第3周；目前第4周', new Date(2026, 10, 10))).toThrow(/冲突/)
+    expect(() => inferTermStart('第一周从 2025-02-29 开始', new Date(2025, 2, 3))).toThrow(/不是有效/)
+  })
+
+  it.each(['2026-02-31', '2025-02-29', '2026-13-01', '2026-04-00', '2026-09-071'])('拒绝 AI 提供的非法日期 %s', (termStart) => {
+    expect(() => sanitizeSchedule({ termStart })).toThrow(/不是有效的日历日期/)
+  })
+
   it('清洗：时间补零、周次去重排序、坏记录进 notes、同名合并', () => {
     const d = sanitizeSchedule({
       termStart: '2026-09-07',
@@ -239,6 +275,20 @@ describe('schedule', () => {
 })
 
 describe('courses', () => {
+  it('错误的第一周日期不会替换现有课程或计划', () => {
+    const courses = new CourseRepo(db)
+    const draft = { termStart: '2024-02-29', notes: [], courses: [{ name: '旧课表', location: '', teacher: '', meetings: [
+      { weekday: 4, start: '08:00', end: '09:35', weeks: [1], location: '' }
+    ] }] }
+    expect(courses.commit(draft, true)).toEqual({ courses: 1, blocks: 1 })
+    expect(db.prepare('SELECT term_start FROM courses').get()).toMatchObject({ term_start: '2024-02-26' })
+    for (const termStart of ['2026-02-31', '2025-02-29']) {
+      expect(() => courses.commit({ ...draft, termStart }, true)).toThrow(/必须实际存在/)
+    }
+    expect(courses.list().map((c) => c.name)).toEqual(['旧课表'])
+    expect(db.prepare('SELECT COUNT(*) AS total FROM plan_blocks').get()).toMatchObject({ total: 1 })
+  })
+
   it('周次换算日期：termStart 不是周一时也从那一周的周一算', () => {
     expect(meetingDate('2026-09-07', 1, 1)).toEqual(new Date(2026, 8, 7))
     expect(meetingDate('2026-09-09', 1, 1)).toEqual(new Date(2026, 8, 7))
