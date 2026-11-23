@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Settings, SystemStatus } from '@shared/types'
 import { hotkeyLabel } from '@shared/format'
+import { toAccelerator } from '@shared/accelerator'
 import { Dialog } from '../ui'
 import { isMacPlatform, platformName } from '../platform'
 import { AiSettings } from './AiSettings'
@@ -9,22 +10,6 @@ interface Props {
   settings: Settings
   onSave: (patch: Partial<Settings>) => void
   onClose: () => void
-}
-
-/** 把键盘事件转成 Electron 快捷键写法，如 Alt+Shift+Space、Command+Shift+Space */
-function toAccelerator(e: React.KeyboardEvent): string | null {
-  const key = e.key
-  if (['Control', 'Shift', 'Alt', 'Meta'].includes(key)) return null
-  const mac = isMacPlatform
-  const mods = [
-    e.ctrlKey && 'Ctrl',
-    e.altKey && (mac ? 'Option' : 'Alt'),
-    e.shiftKey && 'Shift',
-    e.metaKey && (mac ? 'Command' : 'Super')
-  ].filter(Boolean)
-  if (!mods.length) return null
-  const name = key === ' ' ? 'Space' : key.length === 1 ? key.toUpperCase() : key
-  return [...mods, name].join('+')
 }
 
 export function SettingsDialog({ settings, onSave, onClose }: Props) {
@@ -224,10 +209,10 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
               onFocus={() => setRecording(true)}
               onBlur={() => setRecording(false)}
               onKeyDown={(e) => {
-                if (e.key === 'Tab') return
+                if (e.code === 'Tab' || e.nativeEvent.isComposing) return
                 e.preventDefault()
-                if (e.key === 'Escape') return e.currentTarget.blur()
-                const acc = toAccelerator(e)
+                if (e.code === 'Escape') return e.currentTarget.blur()
+                const acc = toAccelerator(e.nativeEvent, platformName)
                 if (acc) {
                   set('hotkey', acc)
                   e.currentTarget.blur()
