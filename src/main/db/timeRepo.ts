@@ -11,6 +11,7 @@ import type {
   StopTimerInput,
   TimeEntry
 } from '@shared/types'
+import { blockEndDue, blockEndKey, rememberDismissal } from '../reminderDismissals'
 
 interface BlockRow {
   id: string
@@ -330,8 +331,26 @@ export class TimeRepo {
     const cur = this.running()
     if (!cur) throw new Error('当前没有在计时')
     const now = this.now()
-    const nowIso = now.toISOString()
+    const block = cur.planBlockId ? this.getBlock(cur.planBlockId) : null
+    const endedBlock = block && !block.taskId && !block.courseId && blockEndDue(new Date(block.endAt), now) ? block : null
 
+    if (!endedBlock) return this.finishTimer(cur, input, now)
+
+    // 与停止计时一起记下；切换任务、没有 tick、短记录被丢弃时也不补弹。
+    this.db.exec('SAVEPOINT stop_timer')
+    try {
+      const result = this.finishTimer(cur, input, now)
+      rememberDismissal(this.db, 'once', blockEndKey(endedBlock.id, endedBlock.endAt), now)
+      this.db.exec('RELEASE stop_timer')
+      return result
+    } catch (err) {
+      this.db.exec('ROLLBACK TO stop_timer; RELEASE stop_timer')
+      throw err
+    }
+  }
+
+  private finishTimer(cur: TimeEntry, input: StopTimerInput, now: Date): StopResult {
+    const nowIso = now.toISOString()
     if (cur.taskId) {
       if (input.nextStep !== undefined)
         this.db.prepare('UPDATE tasks SET next_step = ?, updated_at = ? WHERE id = ?').run(input.nextStep.trim(), nowIso, cur.taskId)
