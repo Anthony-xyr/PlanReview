@@ -194,6 +194,21 @@ export class TimeRepo {
     return this.getBlock(id)!
   }
 
+  /** 复制独立的计划行，不复制实际记录；保留课表关联及该块的地点。 */
+  copyBlock(id: string, startAt: string): PlanBlock {
+    const source = this.getBlock(id)
+    if (!source) throw new Error('计划不存在')
+    const start = iso(startAt, '开始时间')
+    const duration = Date.parse(source.endAt) - Date.parse(source.startAt)
+    const [, end] = this.range(start, new Date(Date.parse(start) + duration).toISOString())
+    const newId = crypto.randomUUID()
+    this.db.prepare(`
+      INSERT INTO plan_blocks (id, task_id, title, category_id, start_at, end_at, updated_at, course_id, location)
+      SELECT ?, task_id, title, category_id, ?, ?, ?, course_id, location FROM plan_blocks WHERE id = ?
+    `).run(newId, start, end, this.nowIso(), id)
+    return this.getBlock(newId)!
+  }
+
   updateBlock(id: string, patch: Partial<BlockInput>): PlanBlock {
     const cur = this.getBlock(id)
     if (!cur) throw new Error('计划不存在')

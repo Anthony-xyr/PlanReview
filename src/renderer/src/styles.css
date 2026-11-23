@@ -321,6 +321,26 @@ html:has(dialog:modal) .window-titlebar { -webkit-app-region: no-drag; }
 .block:hover .block-start, .block-start:focus-visible { opacity: 1; }
 .resize { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; cursor: ns-resize; }
 .block.ghost { left: 2px; right: 2px; background: var(--accent-soft); border: 1px dashed var(--accent); color: var(--accent-text); cursor: crosshair; pointer-events: none; }
+.col.is-copy-drag, .col.is-copy-drag .block { cursor: copy; }
+.col.is-invalid-copy, .col.is-invalid-copy .block { cursor: not-allowed; }
+.block.block-copy-preview {
+  pointer-events: none; z-index: 4; padding: 0; overflow: visible;
+  border: 1px dashed var(--accent); background: var(--accent-soft);
+}
+.block.block-copy-preview.is-invalid { border-color: var(--danger); background: var(--danger-soft); }
+.block-copy-card {
+  position: absolute; inset-block-start: 0; inset-inline-start: 0;
+  display: flex; align-items: baseline; gap: 5px; width: max-content; max-width: max(150px, 100%);
+  min-height: 17px; padding: 1px 5px; border-radius: 4px;
+  background: var(--accent-soft); color: var(--accent-text); box-shadow: 0 1px 3px rgb(0 0 0 / .16);
+  font-size: 11px; line-height: 15px; white-space: nowrap;
+}
+.align-end .block-copy-card { inset-inline-start: auto; inset-inline-end: 0; }
+.is-invalid .block-copy-card { background: var(--danger-soft); color: var(--danger); }
+.block-copy-label { flex: none; font-weight: 650; }
+.block-copy-time { flex: none; font-variant-numeric: tabular-nums; }
+.block-copy-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+.copy-drop-hint { font-size: 12px; }
 
 /* ---------- M3：计时条、提醒、收尾 ---------- */
 

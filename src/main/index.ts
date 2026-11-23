@@ -209,6 +209,7 @@ function registerIpc(): void {
     'tags:list': () => repo.listTags(),
     'plan:list': (from: string, to: string) => time.listBlocks(from, to),
     'plan:create': (input) => time.createBlock(input),
+    'plan:copy': (id: string, startAt: string) => time.copyBlock(id, startAt),
     'plan:update': (id: string, patch) => time.updateBlock(id, patch),
     'plan:remove': (id: string) => time.deleteBlock(id),
     'entries:list': (from: string, to: string) => time.listEntries(from, to),

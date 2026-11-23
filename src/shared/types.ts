@@ -541,6 +541,7 @@ export interface Api {
     /** 与 [from, to) 有重叠的计划时段 */
     list(from: string, to: string): Promise<PlanBlock[]>
     create(input: BlockInput): Promise<PlanBlock>
+    copy(id: string, startAt: string): Promise<PlanBlock>
     update(id: string, patch: Partial<BlockInput>): Promise<PlanBlock>
     remove(id: string): Promise<void>
   }
