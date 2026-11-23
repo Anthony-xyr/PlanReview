@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AiConfigView, Course, CourseMeeting, ImportFile, ScheduleDraft } from '@shared/types'
+import { calendarMonday, localCalendarKey, parseCalendarDate } from '@shared/calendarDate'
 import { Dialog, errorText } from '../ui'
 import { ACCEPT, readImportFile } from '../importFiles'
+import { requiresFallbackConfirmation, scheduleImportDateError } from './scheduleImportDate'
 
 const WEEKDAY = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日']
 
@@ -36,19 +38,14 @@ export function textToWeeks(s: string): number[] | null {
   return set.size ? [...set].sort((x, y) => x - y) : null
 }
 
-/** 本周一，作为第一周日期的默认值 */
-function thisMonday(): string {
-  const d = new Date()
-  d.setDate(d.getDate() - ((d.getDay() + 6) % 7))
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-
 export function ImportDialog({ onClose, onOpenSettings, onDone }: Props) {
   const [cfg, setCfg] = useState<AiConfigView | null>(null)
   const [existing, setExisting] = useState<Course[]>([])
   const [files, setFiles] = useState<ImportFile[]>([])
   const [hint, setHint] = useState('')
   const [draft, setDraft] = useState<ScheduleDraft | null>(null)
+  const [fallbackDate, setFallbackDate] = useState<string | null>(null)
+  const [confirmedFallback, setConfirmedFallback] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [replace, setReplace] = useState(true)
@@ -77,14 +74,13 @@ export function ImportDialog({ onClose, onOpenSettings, onDone }: Props) {
   const parse = async () => {
     setError(null)
     setBusy('AI 正在分析课表，图片较多时可能要一两分钟…')
+    const today = parseCalendarDate(localCalendarKey(new Date()))!
     try {
       const d = await window.api.ai.parseSchedule(files, hint)
-      const termStart = d.termStart || thisMonday()
-      const notes = [...d.notes]
-      if (!d.termStart) {
-        notes.push(`未在课表或补充说明中识别到开学日期，已默认填充本周周一（${termStart}）。若当前非第 1 周，请在下方修改。`)
-      }
-      setDraft({ ...d, termStart, notes })
+      const fallback = d.termStart ? null : calendarMonday(today)
+      setFallbackDate(fallback)
+      setConfirmedFallback(false)
+      setDraft({ ...d, termStart: fallback ?? d.termStart })
     } catch (e) {
       setError(errorText(e))
     } finally {
@@ -93,7 +89,9 @@ export function ImportDialog({ onClose, onOpenSettings, onDone }: Props) {
   }
 
   const commit = async () => {
-    if (!draft) return
+    if (!draft || busy) return
+    const issue = scheduleImportDateError(draft.termStart, fallbackDate, confirmedFallback)
+    if (issue) { setError(issue); return }
     setError(null)
     setBusy('正在写入…')
     try {
@@ -115,6 +113,8 @@ export function ImportDialog({ onClose, onOpenSettings, onDone }: Props) {
   if (!cfg) return null
   const aiReady = cfg.enabled && !!cfg.baseUrl && !!cfg.model
   const hasImage = files.some((f) => f.kind === 'image')
+  const usingFallback = !!draft && requiresFallbackConfirmation(draft.termStart, fallbackDate)
+  const dateError = draft && scheduleImportDateError(draft.termStart, fallbackDate, confirmedFallback)
 
   return (
     <Dialog title="导入课表" onClose={onClose}>
@@ -190,15 +190,31 @@ export function ImportDialog({ onClose, onOpenSettings, onDone }: Props) {
             </div>
           </>
         ) : (
-          <Preview draft={draft} setDraft={setDraft} />
+          <Preview draft={draft} usingFallback={usingFallback} setDraft={(next) => {
+            if (next.termStart !== draft.termStart) {
+              setConfirmedFallback(false)
+              setError(null)
+            }
+            setDraft(next)
+          }} />
         )}
 
         {draft && (
           <>
             {existing.length > 0 && (
               <label className="check">
-                <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} />
+                <input type="checkbox" checked={replace} disabled={!!busy} onChange={(e) => {
+                  setReplace(e.target.checked)
+                  setConfirmedFallback(false)
+                }} />
                 替换现有的 {existing.length} 门课（不勾选则追加）
+              </label>
+            )}
+            {usingFallback && (
+              <label className="check import-confirm-date">
+                <input type="checkbox" checked={confirmedFallback} disabled={!!busy}
+                  onChange={(e) => setConfirmedFallback(e.target.checked)} />
+                我已核对第一周日期，确认按 {draft.termStart} {replace && existing.length > 0 ? '替换现有课表' : '导入课表'}
               </label>
             )}
             <div className="dialog-actions">
@@ -209,7 +225,7 @@ export function ImportDialog({ onClose, onOpenSettings, onDone }: Props) {
               <button className="secondary" onClick={onClose}>
                 取消
               </button>
-              <button onClick={commit} disabled={!!busy || !draft.courses.length}>
+              <button onClick={commit} disabled={!!busy || !draft.courses.length || !!dateError}>
                 确认导入
               </button>
             </div>
@@ -232,8 +248,10 @@ export function ImportDialog({ onClose, onOpenSettings, onDone }: Props) {
 }
 
 /** 预览：每一次上课一行，所有字段可改 */
-function Preview({ draft, setDraft }: { draft: ScheduleDraft; setDraft: (d: ScheduleDraft) => void }) {
+function Preview({ draft, setDraft, usingFallback }: { draft: ScheduleDraft; setDraft: (d: ScheduleDraft) => void; usingFallback: boolean }) {
   const total = draft.courses.reduce((s, c) => s + c.meetings.reduce((n, m) => n + m.weeks.length, 0), 0)
+  const date = parseCalendarDate(draft.termStart)
+  const monday = date ? calendarMonday(date) : null
 
   const setCourse = (ci: number, patch: Partial<ScheduleDraft['courses'][number]>) =>
     setDraft({ ...draft, courses: draft.courses.map((c, i) => (i === ci ? { ...c, ...patch } : c)) })
@@ -251,7 +269,7 @@ function Preview({ draft, setDraft }: { draft: ScheduleDraft; setDraft: (d: Sche
       </p>
       {draft.notes.length > 0 && (
         <div className="form-warn">
-          <strong>AI 提醒你核对：</strong>
+          <strong>请核对解析结果</strong>
           <ul>
             {draft.notes.map((n, i) => (
               <li key={i}>{n}</li>
@@ -259,10 +277,20 @@ function Preview({ draft, setDraft }: { draft: ScheduleDraft; setDraft: (d: Sche
           </ul>
         </div>
       )}
+      {usingFallback && (
+        <div className="form-warn import-date-warning" id="import-date-warning" role="status">
+          <strong>未识别到开学日期</strong>
+          <div>当前暂按本周一（{draft.termStart}）试算。若当前不是第 1 周，请直接修改下方日期。</div>
+        </div>
+      )}
       <label className="field inline">
         <span>第一周的周一</span>
-        <input type="date" value={draft.termStart} onChange={(e) => setDraft({ ...draft, termStart: e.target.value })} />
+        <input type="date" value={draft.termStart} max="9999-12-31" aria-invalid={!date}
+          aria-describedby={usingFallback ? 'import-date-warning' : !date || monday !== draft.termStart ? 'import-date-note' : undefined}
+          onChange={(e) => setDraft({ ...draft, termStart: e.target.value })} />
       </label>
+      {!date ? <p className="hint-error" id="import-date-note">请填写有效的第一周日期。</p>
+        : monday !== draft.termStart && <p className="muted" id="import-date-note">将按所选日期所在周的周一（{monday}）导入。</p>}
       <div className="preview-scroll">
         <table className="preview">
           <thead>
