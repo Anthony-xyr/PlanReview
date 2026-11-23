@@ -46,7 +46,7 @@
   --chart-plan: #1f1e1b;
   --float-bg: rgba(255, 255, 255, 0.9);
   --float-line: rgba(0, 0, 0, 0.1);
-  font-family: 'Segoe UI', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei UI', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
   font-size: 14px;
   color: var(--text);
   background: var(--bg);
@@ -140,6 +140,25 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--accent); }
   border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 2px;
 }
 .brand { font-weight: 600; padding: 4px 10px 14px; }
+
+/* ---------- 顶部标题栏：Windows 下取代原生标题栏 ---------- */
+
+.app.has-titlebar { --titlebar-height: env(titlebar-area-height, 34px); }
+.window-titlebar {
+  position: fixed; top: env(titlebar-area-y, 0px); left: env(titlebar-area-x, 0px);
+  width: env(titlebar-area-width, 100%); height: var(--titlebar-height);
+  z-index: 20; display: flex; align-items: stretch; user-select: none; -webkit-app-region: drag;
+  background: var(--bg);
+}
+html:has(dialog:modal) .window-titlebar { -webkit-app-region: no-drag; }
+.window-titlebar-left {
+  width: 180px; flex-shrink: 0; display: flex; align-items: center; padding: 0 10px;
+  background: var(--side); border-right: 1px solid var(--line);
+}
+.window-titlebar-left .brand { padding: 0; font-size: 13px; color: var(--text); }
+.window-titlebar-drag { flex: 1; background: var(--bg); border-bottom: 1px solid var(--line-soft); }
+.app.has-titlebar { padding-top: calc(env(titlebar-area-y, 0px) + var(--titlebar-height)); }
+.app.has-titlebar .sidebar { padding-top: 8px; }
 .nav-heading { font-size: 11px; color: var(--faint); padding: 14px 10px 3px; letter-spacing: .04em; }
 .nav-item {
   display: flex; align-items: center; gap: 8px; text-align: left;
@@ -302,6 +321,26 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--accent); }
 .block:hover .block-start, .block-start:focus-visible { opacity: 1; }
 .resize { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; cursor: ns-resize; }
 .block.ghost { left: 2px; right: 2px; background: var(--accent-soft); border: 1px dashed var(--accent); color: var(--accent-text); cursor: crosshair; pointer-events: none; }
+.col.is-copy-drag, .col.is-copy-drag .block { cursor: copy; }
+.col.is-invalid-copy, .col.is-invalid-copy .block { cursor: not-allowed; }
+.block.block-copy-preview {
+  pointer-events: none; z-index: 4; padding: 0; overflow: visible;
+  border: 1px dashed var(--accent); background: var(--accent-soft);
+}
+.block.block-copy-preview.is-invalid { border-color: var(--danger); background: var(--danger-soft); }
+.block-copy-card {
+  position: absolute; inset-block-start: 0; inset-inline-start: 0;
+  display: flex; align-items: baseline; gap: 5px; width: max-content; max-width: max(150px, 100%);
+  min-height: 17px; padding: 1px 5px; border-radius: 4px;
+  background: var(--accent-soft); color: var(--accent-text); box-shadow: 0 1px 3px rgb(0 0 0 / .16);
+  font-size: 11px; line-height: 15px; white-space: nowrap;
+}
+.align-end .block-copy-card { inset-inline-start: auto; inset-inline-end: 0; }
+.is-invalid .block-copy-card { background: var(--danger-soft); color: var(--danger); }
+.block-copy-label { flex: none; font-weight: 650; }
+.block-copy-time { flex: none; font-variant-numeric: tabular-nums; }
+.block-copy-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+.copy-drop-hint { font-size: 12px; }
 
 /* ---------- M3：计时条、提醒、收尾 ---------- */
 
@@ -355,8 +394,10 @@ html.is-float, html.is-float body { background: transparent; overflow: hidden; }
 .float {
   margin: 1px; border-radius: 12px; background: var(--float-bg); border: 1px solid var(--float-line);
   box-shadow: 0 6px 18px rgba(0,0,0,.14); overflow: hidden; font-size: 13px; color: var(--text);
+  display: flex; flex-direction: column; max-height: 598px;
 }
-.float-bar { display: flex; align-items: center; gap: 6px; padding: 6px 6px 4px 10px; -webkit-app-region: drag; }
+.float-bar { display: flex; align-items: center; flex-shrink: 0; gap: 6px; padding: 6px 6px 4px 10px; -webkit-app-region: drag; }
+.float-content { min-height: 0; overflow-y: auto; }
 .float-brand { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
 .float-drag { flex: 1; font-size: 12px; color: var(--muted); }
 .float-btn { -webkit-app-region: no-drag; background: none; border: 0; color: var(--muted); padding: 0 6px; font-size: 14px; line-height: 20px; }
@@ -371,13 +412,69 @@ html.is-float, html.is-float body { background: transparent; overflow: hidden; }
 .float button.small { padding: 2px 10px; font-size: 12px; }
 .float-next { display: flex; gap: 6px; align-items: baseline; padding: 6px 12px; border-top: 1px solid var(--line-soft); }
 .float-next-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.float-next button, .float-next .muted { flex: none; white-space: nowrap; }
+.float-picker { border-top: 1px solid var(--line-soft); }
+.float-picker-toggle, .float-picker-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; padding: 6px 8px; color: var(--text); background: none; border: 0; text-align: left; font-size: 12px;
+}
+.float-picker-toggle { padding: 8px 12px; }
+.float-picker-panel { padding: 0 10px 10px; }
+.float-picker-panel input { width: 100%; font-size: 12px; margin-bottom: 4px; }
+.float-picker-list { max-height: 216px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.float-picker-list h2 { margin: 8px 0 4px; padding-inline: 6px; font-size: 11px; color: var(--muted); font-weight: 650; }
+.float-picker-list p { margin: 4px; font-size: 12px; }
+.float-picker-list ul { margin: 0; padding: 0 3px 2px 2px; list-style: none; }
+.float-picker-list li + li { margin-top: 2px; }
+.float-picker-item { min-height: 33px; padding: 6px; border-radius: 6px; line-height: 1.4; }
+.float-picker-title {
+  min-width: 0; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box;
+  -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+}
+.float-picker-meta { display: flex; flex: 0 1 auto; min-width: 0; max-width: 35%; flex-direction: column; align-items: end; gap: 2px; }
+.float-picker-meta:empty { display: none; }
+.float-picker-category { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 5px; border-radius: 4px; color: var(--text); background: var(--sunken); }
+.float-picker-clock { color: var(--muted); font-variant-numeric: tabular-nums; }
+.float-picker-toggle:hover, .float-picker-item:hover:not(:disabled) { background: var(--hover); filter: none; }
+.float-picker button:focus-visible { outline-offset: -2px; }
 .float-capture { padding: 6px 8px 8px; border-top: 1px solid var(--line-soft); opacity: 0; max-height: 0; overflow: hidden; transition: opacity 0.2s ease, max-height 0.2s ease, padding 0.2s ease; }
 .float-capture.is-expanded { opacity: 1; max-height: 100px; }
 .float-capture input { width: 100%; padding: 6px 8px; font-size: 13px; }
-.float-hint { padding: 8px 12px; border-top: 1px solid var(--line-soft); font-size: 12px; color: var(--muted); text-align: center; cursor: pointer; user-select: none; transition: color 0.15s ease, background 0.15s ease; }
+.float-hint { width: 100%; padding: 8px 12px; border: 0; border-top: 1px solid var(--line-soft); border-radius: 0; background: none; font-size: 12px; color: var(--muted); text-align: center; cursor: pointer; user-select: none; transition: color 0.15s ease, background 0.15s ease; }
 .float-hint:hover { color: var(--text); background: var(--hover); }
+.float-hint:focus-visible { outline-offset: -2px; }
 .float-flash { padding: 0 12px 8px; font-size: 12px; color: var(--ok); }
 .float-flash.is-error { color: var(--danger); }
+
+/* ---------- 顶部计时器 ---------- */
+
+html.is-desktop-timer, html.is-desktop-timer body { background: transparent; overflow: hidden; }
+.desktop-timer-frame { display: flex; width: max-content; margin-inline: auto; padding: 4px 5px 5px; }
+.desktop-timer {
+  --timer-surface: rgb(250 250 248 / .96); --timer-border: rgb(30 30 30 / .30);
+  --timer-status: #4e4d48; --timer-over: #794809;
+  min-width: 0; height: 28px; padding: 0 9px;
+  display: flex; align-items: center; gap: 7px; overflow: hidden;
+  border: 1px solid var(--timer-border); border-radius: 14px;
+  background: var(--timer-surface); color: var(--text); box-shadow: 0 1px 4px rgb(0 0 0 / .32);
+  font-size: 12px; line-height: 1.2; user-select: none; transition: opacity 200ms ease-out;
+}
+@media (prefers-color-scheme: dark) {
+  .desktop-timer {
+    --timer-surface: rgb(29 29 34 / .96); --timer-border: rgb(255 255 255 / .28);
+    --timer-status: #d2d2d8; --timer-over: #ffd080;
+  }
+}
+.desktop-timer.is-near-cursor { opacity: .18; transition-duration: 110ms; }
+.desktop-timer-indicator { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--live); }
+.desktop-timer-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.desktop-timer-elapsed, .desktop-timer-left { display: grid; flex: none; text-align: end; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.desktop-timer-elapsed > span, .desktop-timer-left > span { grid-area: 1 / 1; }
+.desktop-timer-reserve { visibility: hidden; }
+.desktop-timer-left { color: var(--timer-status); }
+.desktop-timer.is-over .desktop-timer-left { color: var(--timer-over); }
+.desktop-timer.is-over .desktop-timer-indicator { background: var(--timer-over); }
+@media (prefers-reduced-motion: reduce) { .desktop-timer { transition: none; } }
 
 /* ---------- M4：AI 设置、速记确认、课表导入 ---------- */
 
@@ -455,6 +552,9 @@ html.is-float, html.is-float body { background: transparent; overflow: hidden; }
 .block.is-course { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--c) calc(var(--tint) + 2%), var(--mix)) 0 8px, color-mix(in srgb, var(--c) calc(var(--tint) - 4%), var(--mix)) 8px 16px); }
 .block-loc { font-size: 11px; color: var(--muted); }
 .dialog:has(.import) { width: 900px; max-height: 88vh; }
+.import-date-warning { margin: 10px 0; border-left: 4px solid var(--warn); }
+.import-date-warning strong { display: block; margin-bottom: 4px; }
+.import-confirm-date { padding: 8px 10px; margin: 10px 0; border-radius: 6px; background: var(--warn-soft); }
 
 .dialog:has(.settings) { overflow-y: auto; }
 

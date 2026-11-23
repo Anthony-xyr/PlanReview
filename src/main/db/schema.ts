@@ -1,8 +1,31 @@
 import type { DatabaseSync } from 'node:sqlite'
+import { backfillPlanLocations } from './courseLocations'
+
+const createReminderDismissals = `
+  CREATE TABLE IF NOT EXISTS reminder_dismissals (
+    scope      TEXT NOT NULL CHECK (scope IN ('once', 'group')),
+    value      TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (scope, value)
+  );
+`
+
+const createPlannerHabits = `
+  CREATE TABLE IF NOT EXISTS planner_habits (
+    id           TEXT PRIMARY KEY,
+    text         TEXT NOT NULL,
+    example      TEXT NOT NULL DEFAULT '',
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    used_count   INTEGER NOT NULL DEFAULT 0,
+    last_used_at TEXT,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+  );
+`
 
 // 按顺序执行的迁移；PRAGMA user_version 记录已执行到第几条。
 // 主键用 UUID、每行带 updated_at，方便以后做多端同步。
-const migrations: string[] = [
+const migrations: (string | ((db: DatabaseSync) => void))[] = [
   `
   CREATE TABLE categories (
     id         TEXT PRIMARY KEY,
@@ -164,7 +187,13 @@ const migrations: string[] = [
     created_at   TEXT NOT NULL,
     updated_at   TEXT NOT NULL
   );
-  `
+  `,
+  // M8：提醒关闭记录。
+  createReminderDismissals,
+  // M9：保留排程习惯表的位置与已有记录，不在这里接入排程习惯功能。
+  createPlannerHabits,
+  // M10：地点列及逐次地点回填，并修复同版本号的不同旧库结构。
+  reconcilePlanLocations
 ]
 
 // 默认大类颜色：按固定顺序取自经过色盲校验的分类色板（相邻两色在各类色觉下都能分清）
@@ -183,17 +212,36 @@ export function migrate(db: DatabaseSync): void {
   const { user_version: current } = db.prepare('PRAGMA user_version').get() as { user_version: number }
 
   for (let v = current; v < migrations.length; v++) {
-    db.exec('BEGIN')
-    try {
-      db.exec(migrations[v])
+    const migration = migrations[v]
+    inTransaction(db, () => {
+      if (typeof migration === 'string') db.exec(migration)
+      else migration(db)
       if (v === 0) seedCategories(db)
       db.exec(`PRAGMA user_version = ${v + 1}`)
-      db.exec('COMMIT')
-    } catch (err) {
-      db.exec('ROLLBACK')
-      throw err
-    }
+    })
   }
+
+  // 已处于较新版本的旧分支库也可能少表或少列；仅补结构，不回退版本。
+  if (current >= migrations.length) inTransaction(db, () => reconcilePlanLocations(db))
+}
+
+function inTransaction(db: DatabaseSync, change: () => void): void {
+  db.exec('BEGIN')
+  try {
+    change()
+    db.exec('COMMIT')
+  } catch (err) {
+    db.exec('ROLLBACK')
+    throw err
+  }
+}
+
+function reconcilePlanLocations(db: DatabaseSync): void {
+  db.exec(createReminderDismissals + createPlannerHabits)
+  if (!db.prepare("SELECT 1 FROM pragma_table_info('plan_blocks') WHERE name = 'location'").get()) {
+    db.exec("ALTER TABLE plan_blocks ADD COLUMN location TEXT NOT NULL DEFAULT ''")
+  }
+  backfillPlanLocations(db)
 }
 
 function seedCategories(db: DatabaseSync): void {

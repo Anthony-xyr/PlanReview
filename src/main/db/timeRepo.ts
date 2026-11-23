@@ -11,6 +11,7 @@ import type {
   StopTimerInput,
   TimeEntry
 } from '@shared/types'
+import { blockEndDue, blockEndKey, rememberDismissal } from '../reminderDismissals'
 
 interface BlockRow {
   id: string
@@ -22,6 +23,7 @@ interface BlockRow {
   task_status: PlanBlock['taskStatus']
   start_at: string
   end_at: string
+  location?: string | null
   course_id: string | null
   course_location: string | null
 }
@@ -56,7 +58,7 @@ function toBlock(r: BlockRow): PlanBlock {
     startAt: r.start_at,
     endAt: r.end_at,
     courseId: r.course_id,
-    location: r.course_location ?? ''
+    location: r.location || r.course_location || ''
   }
 }
 
@@ -171,6 +173,15 @@ export class TimeRepo {
     return rows.map(toBlock)
   }
 
+  /** 区间内的计划有哪些被计时过。提前开始的记录本身可能在前一天。 */
+  startedBlockIds(from: string, to: string): string[] {
+    const rows = this.db.prepare(`
+      SELECT DISTINCT e.plan_block_id AS id FROM time_entries e JOIN plan_blocks b ON b.id = e.plan_block_id
+      WHERE e.source = 'timer' AND b.start_at < ? AND b.end_at > ?
+    `).all(iso(to, '结束'), iso(from, '开始')) as { id: string }[]
+    return rows.map((row) => row.id)
+  }
+
   getBlock(id: string): PlanBlock | null {
     const row = this.db.prepare(`${BLOCK_SELECT} WHERE b.id = ?`).get(id) as BlockRow | undefined
     return row ? toBlock(row) : null
@@ -179,16 +190,32 @@ export class TimeRepo {
   createBlock(input: BlockInput): PlanBlock {
     const { taskId, title, categoryId } = this.subject(input)
     const [s, e] = this.range(input.startAt, input.endAt)
+    const location = input.location?.trim() ?? ''
     const id = crypto.randomUUID()
     this.db
       .prepare(
-        `INSERT INTO plan_blocks (id, task_id, title, category_id, start_at, end_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO plan_blocks (id, task_id, title, category_id, start_at, end_at, location, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(id, taskId, title, categoryId, s, e, this.nowIso())
+      .run(id, taskId, title, categoryId, s, e, location, this.nowIso())
     // 排进计划的收件箱任务视为已整理
     if (taskId) this.db.prepare(`UPDATE tasks SET status = 'active' WHERE id = ? AND status = 'inbox'`).run(taskId)
     return this.getBlock(id)!
+  }
+
+  /** 复制独立的计划行，不复制实际记录；保留课表关联及该块的地点。 */
+  copyBlock(id: string, startAt: string): PlanBlock {
+    const source = this.getBlock(id)
+    if (!source) throw new Error('计划不存在')
+    const start = iso(startAt, '开始时间')
+    const duration = Date.parse(source.endAt) - Date.parse(source.startAt)
+    const [, end] = this.range(start, new Date(Date.parse(start) + duration).toISOString())
+    const newId = crypto.randomUUID()
+    this.db.prepare(`
+      INSERT INTO plan_blocks (id, task_id, title, category_id, start_at, end_at, updated_at, course_id, location)
+      SELECT ?, task_id, title, category_id, ?, ?, ?, course_id, location FROM plan_blocks WHERE id = ?
+    `).run(newId, start, end, this.nowIso(), id)
+    return this.getBlock(newId)!
   }
 
   updateBlock(id: string, patch: Partial<BlockInput>): PlanBlock {
@@ -201,12 +228,13 @@ export class TimeRepo {
     }
     const { taskId, title, categoryId } = this.subject(merged)
     const [s, e] = this.range(patch.startAt ?? cur.startAt, patch.endAt ?? cur.endAt)
+    const location = patch.location !== undefined ? patch.location.trim() : cur.location
     this.db
       .prepare(
-        `UPDATE plan_blocks SET task_id = ?, title = ?, category_id = ?, start_at = ?, end_at = ?, updated_at = ?
+        `UPDATE plan_blocks SET task_id = ?, title = ?, category_id = ?, start_at = ?, end_at = ?, location = ?, updated_at = ?
          WHERE id = ?`
       )
-      .run(taskId, title, categoryId, s, e, this.nowIso(), id)
+      .run(taskId, title, categoryId, s, e, location, this.nowIso(), id)
     return this.getBlock(id)!
   }
 
@@ -330,8 +358,26 @@ export class TimeRepo {
     const cur = this.running()
     if (!cur) throw new Error('当前没有在计时')
     const now = this.now()
-    const nowIso = now.toISOString()
+    const block = cur.planBlockId ? this.getBlock(cur.planBlockId) : null
+    const endedBlock = block && !block.taskId && !block.courseId && blockEndDue(new Date(block.endAt), now) ? block : null
 
+    if (!endedBlock) return this.finishTimer(cur, input, now)
+
+    // 与停止计时一起记下；切换任务、没有 tick、短记录被丢弃时也不补弹。
+    this.db.exec('SAVEPOINT stop_timer')
+    try {
+      const result = this.finishTimer(cur, input, now)
+      rememberDismissal(this.db, 'once', blockEndKey(endedBlock.id, endedBlock.endAt), now)
+      this.db.exec('RELEASE stop_timer')
+      return result
+    } catch (err) {
+      this.db.exec('ROLLBACK TO stop_timer; RELEASE stop_timer')
+      throw err
+    }
+  }
+
+  private finishTimer(cur: TimeEntry, input: StopTimerInput, now: Date): StopResult {
+    const nowIso = now.toISOString()
     if (cur.taskId) {
       if (input.nextStep !== undefined)
         this.db.prepare('UPDATE tasks SET next_step = ?, updated_at = ? WHERE id = ?').run(input.nextStep.trim(), nowIso, cur.taskId)

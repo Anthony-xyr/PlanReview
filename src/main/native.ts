@@ -1,20 +1,38 @@
-import koffi from 'koffi'
+import { createRequire } from 'node:module'
 
 // Windows 的「用户通知状态」：全屏游戏、全屏视频、演示模式时返回 2/3/4。
 // 用来在全屏时自动隐藏悬浮窗。失败时返回 null（视为无法检测）。
+//
+// macOS 用独立的全屏桌面（Space）和 visibleOnFullScreen 控制浮窗，不用 Windows 的全屏状态。
+// koffi 只在 Windows 上加载，其他平台缺这个原生模块也不影响启动。
 type QueryFn = (out: number[]) => number
 let query: QueryFn | null | undefined
 
-export function isFullscreenAppActive(): boolean | null {
+interface Koffi {
+  load(path: string): { func(signature: string): unknown }
+}
+
+function loadQuery(): QueryFn | null {
   if (process.platform !== 'win32') return null
+  if (query !== undefined) return query
   try {
-    if (query === undefined) {
-      const shell32 = koffi.load('shell32.dll')
-      query = shell32.func('int __stdcall SHQueryUserNotificationState(_Out_ int *state)') as QueryFn
-    }
-    if (!query) return null
+    // 打包后是 CJS；开发时 electron-vite 也可能输出 ESM，两种都兜住
+    const req = typeof __filename === 'string' ? createRequire(__filename) : createRequire(import.meta.url)
+    const koffi = req('koffi') as Koffi
+    const shell32 = koffi.load('shell32.dll')
+    query = shell32.func('int __stdcall SHQueryUserNotificationState(_Out_ int *state)') as QueryFn
+  } catch {
+    query = null
+  }
+  return query
+}
+
+export function isFullscreenAppActive(): boolean | null {
+  const fn = loadQuery()
+  if (!fn) return null
+  try {
     const out = [0]
-    if (query(out) !== 0) return null
+    if (fn(out) !== 0) return null
     return out[0] === 2 || out[0] === 3 || out[0] === 4
   } catch {
     query = null

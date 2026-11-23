@@ -76,11 +76,9 @@ export function ReminderCard({ reminder: r, compact, ...a }: { reminder: Reminde
               <button className="secondary" onClick={() => a.onSnooze(10)}>
                 10 分钟后再说
               </button>
-              {r.kind !== 'leave' && (
-                <button className="link" onClick={() => a.onDismiss('group')}>
-                  今晚不再提醒
-                </button>
-              )}
+              <button className="link" onClick={() => a.onDismiss('group')}>
+                {r.kind === 'leave' ? '今天不再提醒' : '今晚不再提醒'}
+              </button>
             </>
           )}
           {r.kind === 'block-start' && (
@@ -100,9 +98,15 @@ export function ReminderCard({ reminder: r, compact, ...a }: { reminder: Reminde
             </>
           )}
           {r.kind === 'session-end' && (
-            <button className="link" onClick={() => a.onSnooze(5)}>
-              5 分钟后再问
-            </button>
+            <>
+              <button className="link" onClick={() => a.onSnooze(5)}>
+                5 分钟后再问
+              </button>
+              {/* 一时停不下来、也说不准还要多久：这次计时不再催，计时条照常显示超出多少 */}
+              <button className="link" onClick={() => a.onDismiss()}>
+                这次不再提醒
+              </button>
+            </>
           )}
         </div>
       )}

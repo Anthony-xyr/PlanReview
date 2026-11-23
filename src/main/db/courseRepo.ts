@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { Course, CourseMeeting, ScheduleDraft } from '@shared/types'
+import { calendarMonday, parseCalendarDate } from '@shared/calendarDate'
 
 const CATEGORY_NAME = '课程'
 const CATEGORY_COLOR = '#4a3aa7'
@@ -14,15 +15,20 @@ interface CourseRow {
 
 /** termStart 所在周的周一 + (week-1) 周 + (weekday-1) 天，本地时间 */
 export function meetingDate(termStart: string, week: number, weekday: number): Date {
-  const [y, m, d] = termStart.split('-').map(Number)
-  const base = new Date(y, m - 1, d)
-  const mondayOffset = (base.getDay() + 6) % 7
-  return new Date(y, m - 1, d - mondayOffset + (week - 1) * 7 + (weekday - 1))
+  const date = parseCalendarDate(termStart)
+  if (!date) throw new Error('请填写有效的第一周日期（YYYY-MM-DD）')
+  const [year, month, day] = calendarMonday(date).split('-').map(Number)
+  const result = new Date(0)
+  result.setFullYear(year, month - 1, day + (week - 1) * 7 + (weekday - 1))
+  result.setHours(0, 0, 0, 0)
+  return result
 }
 
 export function atClock(day: Date, clock: string): Date {
   const [h, mi] = clock.split(':').map(Number)
-  return new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, mi)
+  const result = new Date(day.getTime())
+  result.setHours(h, mi, 0, 0)
+  return result
 }
 
 export class CourseRepo {
@@ -46,7 +52,9 @@ export class CourseRepo {
   }
 
   commit(draft: ScheduleDraft, replace: boolean): { courses: number; blocks: number } {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.termStart)) throw new Error('请填写第一周的日期')
+    const date = parseCalendarDate(draft.termStart)
+    if (!date) throw new Error('请填写有效的第一周日期（YYYY-MM-DD），该日期必须实际存在')
+    const termStart = calendarMonday(date)
     if (!draft.courses.length) throw new Error('没有可导入的课程')
     for (const c of draft.courses) {
       if (!c.name.trim()) throw new Error('有课程没有名字')
@@ -64,16 +72,17 @@ export class CourseRepo {
       const now = new Date().toISOString()
       const insCourse = this.db.prepare('INSERT INTO courses (id, name, location, teacher, meetings, term_start, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
       const insBlock = this.db.prepare(
-        'INSERT INTO plan_blocks (id, task_id, title, category_id, start_at, end_at, updated_at, course_id) VALUES (?, NULL, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO plan_blocks (id, task_id, title, category_id, start_at, end_at, location, updated_at, course_id) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?)'
       )
       let blocks = 0
       for (const c of draft.courses) {
         const id = crypto.randomUUID()
-        insCourse.run(id, c.name.trim(), c.location.trim(), c.teacher.trim(), JSON.stringify(c.meetings), draft.termStart, now)
+        insCourse.run(id, c.name.trim(), c.location.trim(), c.teacher.trim(), JSON.stringify(c.meetings), termStart, now)
         for (const m of c.meetings)
           for (const w of m.weeks) {
-            const day = meetingDate(draft.termStart, w, m.weekday)
-            insBlock.run(crypto.randomUUID(), c.name.trim(), cat, atClock(day, m.start).toISOString(), atClock(day, m.end).toISOString(), now, id)
+            const day = meetingDate(termStart, w, m.weekday)
+            const loc = m.location?.trim() || c.location.trim()
+            insBlock.run(crypto.randomUUID(), c.name.trim(), cat, atClock(day, m.start).toISOString(), atClock(day, m.end).toISOString(), loc, now, id)
             blocks++
           }
       }

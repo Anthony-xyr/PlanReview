@@ -6,8 +6,18 @@ import type { ReminderActions } from './components/ReminderCard'
 export function useReminder(): Reminder | null {
   const [r, setR] = useState<Reminder | null>(null)
   useEffect(() => {
-    window.api.reminders.current().then(setR)
-    return window.api.reminders.onChange(setR)
+    let initial = true
+    const off = window.api.reminders.onChange((reminder) => {
+      initial = false
+      setR(reminder)
+    })
+    void window.api.reminders.current().then((reminder) => {
+      if (initial) setR(reminder)
+    }).catch((err: unknown) => console.error(err))
+    return () => {
+      initial = false
+      off()
+    }
   }, [])
   return r
 }

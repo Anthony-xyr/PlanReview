@@ -15,11 +15,12 @@ import type {
   Settings,
   SystemStatus
 } from '@shared/types'
-import { dayOf, dayRange } from '@shared/time'
+import { dayRange } from '@shared/time'
+import { hotkeyLabel } from '@shared/format'
 import { migrate } from './db/schema'
 import { Repo } from './db/repo'
 import { TimeRepo, sleepWindow } from './db/timeRepo'
-import { ReminderCenter } from './reminders'
+import { ReminderCenter, reminderSnapshot } from './reminders'
 import { isFullscreenAppActive } from './native'
 import { CourseRepo } from './db/courseRepo'
 import { AiConfigStore } from './ai/config'
@@ -31,9 +32,15 @@ import { parseSchedule } from './ai/schedule'
 import { WeeklyRepo } from './db/weeklyRepo'
 import { askWeekly, generateWeekly, weekContextText, type WeekContext } from './ai/weekly'
 import { freeGaps, suggestPlan } from './ai/planner'
+import { desktopVisibility, floatIntentAfterReminder, floatIntentAfterTimerChange, floatMayCoverMacFullscreen, type FloatIntent } from './desktopWindows'
+import { MacWorkspaces } from './macWorkspaces'
+import { mainWindowChrome, updateMainWindowChrome } from './mainWindowChrome'
+import { TimerWindow } from './timerWindow'
 
 const FLOAT_WIDTH = 320
 const TICK_MS = 15_000
+const isMac = process.platform === 'darwin'
+const isWindows = process.platform === 'win32'
 
 let repo: Repo
 let time: TimeRepo
@@ -49,19 +56,38 @@ let tray: Tray | null = null
 let quitting = false
 let hotkeyRegistered = false
 let registeredHotkey = ''
-let floatHiddenByUser = false
+let floatIntent: FloatIntent = 'auto'
+let floatReady = false
+let floatBridgeReady = false
+let focusCaptureWhenReady = false
+let lastRunningId: string | null = null
 let fullscreenNow = false
 let lastReminderSig: string | null = null
+let tickInterval: ReturnType<typeof setInterval> | undefined
+/** macOS 启动时（含开机自启）系统可能立刻发 activate，别让它把本来要隐藏的主窗口叫出来 */
+let suppressActivateUntil = 0
 
 // 打包后 resources/ 解压在 app.asar.unpacked 里，托盘和系统通知能直接读到图标文件
 const resource = (name: string) => join(app.getAppPath().replace(/app\.asar$/, 'app.asar.unpacked'), 'resources', name)
+
+const trayIconCache = new Map<string, Electron.NativeImage>()
+/** macOS 菜单栏用单色模板图（深浅色自动反色）；Windows 继续用带颜色的托盘图 */
+function trayIcon(kind: 'idle' | 'running'): Electron.NativeImage {
+  const file = isMac ? (kind === 'running' ? 'tray-running-template.png' : 'tray-template.png') : kind === 'running' ? 'tray-running.png' : 'tray.png'
+  const cached = trayIconCache.get(file)
+  if (cached) return cached
+  const img = nativeImage.createFromPath(resource(file))
+  if (isMac) img.setTemplateImage(true)
+  trayIconCache.set(file, img)
+  return img
+}
 
 function openDatabase(): void {
   const db = new DatabaseSync(join(app.getPath('userData'), 'plan-review.db'))
   migrate(db)
   repo = new Repo(db)
   time = new TimeRepo(db)
-  center = new ReminderCenter(time)
+  center = new ReminderCenter(time, db)
   courses = new CourseRepo(db)
   review = new ReviewRepo(db, repo, time)
   weekly = new WeeklyRepo(db, repo, time)
@@ -182,7 +208,7 @@ function sendCommand(cmd: MainCommand): void {
 
 // 只读通道不触发刷新
 const READ_ONLY = new Set([
-  'tasks:list', 'tasks:get', 'tasks:lineage', 'categories:list', 'tags:list', 'plan:list',
+  'tasks:list', 'tasks:get', 'tasks:lineage', 'categories:list', 'tags:list', 'plan:list', 'plan:startedIds',
   'entries:list', 'entries:running', 'settings:get', 'reminders:current', 'win:status',
   'ai:getConfig', 'ai:test', 'ai:parseCapture', 'ai:reparseCapture', 'ai:parseSchedule', 'courses:list', 'habits:list',
   // 首次调用会定下当天的随机推送，但界面上没有可见变化
@@ -208,7 +234,9 @@ function registerIpc(): void {
     'categories:openCounts': () => repo.openCountByCategory(),
     'tags:list': () => repo.listTags(),
     'plan:list': (from: string, to: string) => time.listBlocks(from, to),
+    'plan:startedIds': (from: string, to: string) => time.startedBlockIds(from, to),
     'plan:create': (input) => time.createBlock(input),
+    'plan:copy': (id: string, startAt: string) => time.copyBlock(id, startAt),
     'plan:update': (id: string, patch) => time.updateBlock(id, patch),
     'plan:remove': (id: string) => time.deleteBlock(id),
     'entries:list': (from: string, to: string) => time.listEntries(from, to),
@@ -223,7 +251,12 @@ function registerIpc(): void {
     'entries:setReason': (id: string, reason) => time.setReason(id, reason),
     'settings:get': () => time.getSettings(),
     'settings:update': (patch: Partial<Settings>) => {
+      const previousFloatingEnabled = time.getSettings().floatingEnabled
       const s = time.updateSettings(patch)
+      if (s.floatingEnabled !== previousFloatingEnabled) {
+        floatIntent = 'auto'
+        focusCaptureWhenReady = false
+      }
       applySettings(s)
       return s
     },
@@ -269,16 +302,14 @@ function registerIpc(): void {
     'reminders:dismiss': (id: string, scope?: 'once' | 'group') => center.dismiss(id, scope),
     'reminders:snooze': (id: string, min: number) => center.snooze(id, min, new Date()),
     'win:openMain': (cmd?: MainCommand) => (cmd ? sendCommand(cmd) : showMain()),
-    'win:showFloat': () => {
-      floatHiddenByUser = false
-      updateFloatVisibility()
-    },
-    'win:hideFloat': () => {
-      floatHiddenByUser = true
-      updateFloatVisibility()
+    'win:showFloat': () => revealFloat(),
+    'win:hideFloat': concealFloat,
+    'win:floatReady': () => {
+      floatBridgeReady = true
+      focusCapture()
     },
     'win:resizeFloat': (height: number) => {
-      if (!floatWin || floatWin.isDestroyed()) return
+      if (!floatWin || floatWin.isDestroyed() || !Number.isFinite(height)) return
       const [w] = floatWin.getSize()
       const h = Math.max(60, Math.min(600, Math.round(height)))
       // 不可调大小的透明窗口在 Windows 上 setSize 只会变高、不会变矮，改用 setBounds 并放开最小尺寸
@@ -287,15 +318,31 @@ function registerIpc(): void {
       floatWin.setMinimumSize(w, 60)
       floatWin.setBounds({ x: b.x, y: b.y, width: w, height: h })
     },
-    'win:status': (): SystemStatus => ({ hotkeyRegistered, fullscreenDetection: isFullscreenAppActive() !== null })
+    'win:status': (): SystemStatus => ({
+      hotkeyRegistered,
+      fullscreenDetection: isWindows && isFullscreenAppActive() !== null,
+      platform: isWindows ? 'win32' : isMac ? 'darwin' : 'linux'
+    })
   }
   for (const [channel, fn] of Object.entries(handlers)) {
     ipcMain.handle(channel, (e, ...args) => {
+      if (timerWindow.owns(e.sender)) throw new Error('该窗口不能使用此通道')
+      if (channel === 'win:resizeFloat' || channel === 'win:floatReady') {
+        if (e.sender !== floatWin?.webContents || e.senderFrame !== e.sender.mainFrame) throw new Error('仅悬浮窗可使用此通道')
+      }
       const result = (fn as (...a: unknown[]) => unknown)(...args)
       if (!READ_ONLY.has(channel) && !channel.startsWith('win:')) dataChanged(e.sender)
       return result
     })
   }
+  ipcMain.handle('timer:state', (e) => {
+    if (!timerWindow.accepts(e)) throw new Error('仅顶部计时器可使用此通道')
+    return timerWindow.snapshot()
+  })
+  ipcMain.handle('timer:resize', (e, width: number) => {
+    if (!timerWindow.accepts(e)) throw new Error('仅顶部计时器可使用此通道')
+    timerWindow.resize(width)
+  })
 }
 
 // ---------- 窗口 ----------
@@ -305,6 +352,13 @@ const webPreferences = (): Electron.WebPreferences => ({
   contextIsolation: true,
   sandbox: true
 })
+
+const macWorkspaces = new MacWorkspaces(() => app.dock)
+const timerWindow = new TimerWindow(
+  () => ({ ...webPreferences(), additionalArguments: ['--planreview-timer'] }),
+  loadRenderer,
+  macWorkspaces
+)
 
 async function waitForDevServer(url: string, maxRetries = 30): Promise<boolean> {
   const http = await import('node:http')
@@ -340,6 +394,12 @@ async function loadRenderer(win: BrowserWindow, hash = ''): Promise<void> {
   }
 }
 
+function syncMainWindowTheme(): void {
+  const win = mainWin
+  if (!win || win.isDestroyed()) return
+  updateMainWindowChrome(win, nativeTheme.shouldUseDarkColors)
+}
+
 function createMainWindow(): void {
   mainWin = new BrowserWindow({
     width: 1280,
@@ -348,13 +408,15 @@ function createMainWindow(): void {
     minHeight: 520,
     title: '计划与复盘',
     icon: resource('icon.png'),
-    backgroundColor: windowBg(),
+    ...mainWindowChrome(nativeTheme.shouldUseDarkColors),
     autoHideMenuBar: true,
     show: false,
     webPreferences: webPreferences()
   })
   mainWin.once('ready-to-show', () => {
-    if (!process.argv.includes('--hidden')) mainWin?.show()
+    // 开机自启：Windows 传 --hidden；macOS 不支持启动参数，用系统给的 wasOpenedAtLogin 判断
+    const atLogin = isMac && app.getLoginItemSettings().wasOpenedAtLogin
+    if (!process.argv.includes('--hidden') && !atLogin) mainWin?.show()
   })
   // 外部链接交给系统浏览器
   mainWin.webContents.setWindowOpenHandler(({ url }) => {
@@ -372,11 +434,6 @@ function createMainWindow(): void {
   loadRenderer(mainWin)
 }
 
-/** 窗口还没画出界面前的底色，和 CSS 里 --bg 一致，免得深色模式下先闪一下白 */
-function windowBg(): string {
-  return nativeTheme.shouldUseDarkColors ? '#1f1f22' : '#fbfbfa'
-}
-
 function showMain(): void {
   if (!mainWin || mainWin.isDestroyed()) createMainWindow()
   if (mainWin!.isMinimized()) mainWin!.restore()
@@ -386,7 +443,7 @@ function showMain(): void {
 
 function createFloatWindow(): void {
   const area = screen.getPrimaryDisplay().workArea
-  floatWin = new BrowserWindow({
+  const win = new BrowserWindow({
     width: FLOAT_WIDTH,
     height: 120,
     x: area.x + area.width - FLOAT_WIDTH - 16,
@@ -402,50 +459,142 @@ function createFloatWindow(): void {
     title: '计划与复盘 · 悬浮窗',
     webPreferences: webPreferences()
   })
-  floatWin.setAlwaysOnTop(true, 'floating')
-  floatWin.on('closed', () => (floatWin = null))
-  floatWin.once('ready-to-show', updateFloatVisibility)
-  loadRenderer(floatWin, '#float')
+  floatWin = win
+  win.setAlwaysOnTop(true, 'floating')
+  win.webContents.on('did-start-loading', () => { floatBridgeReady = false })
+  win.webContents.once('render-process-gone', () => win.destroy())
+  win.once('closed', () => {
+    floatWin = null
+    floatReady = false
+    floatBridgeReady = false
+    macWorkspaces.forget(win)
+  })
+  win.once('ready-to-show', () => {
+    floatReady = true
+    updateDesktopVisibility()
+  })
+  void loadRenderer(win, '#float').catch((err: unknown) => {
+    if (win.isDestroyed()) return
+    console.error('Failed to load the floating window', err)
+    win.destroy()
+  })
 }
 
-function updateFloatVisibility(): void {
-  const s = time.getSettings()
-  if (!s.floatingEnabled) {
-    floatWin?.destroy()
-    return
+function updateDesktopVisibility(s = time.getSettings(), running = time.running(), reminder = center.get()): void {
+  if (quitting) return
+  const runningId = running?.id ?? null
+  if (runningId !== lastRunningId) focusCaptureWhenReady = false
+  floatIntent = floatIntentAfterTimerChange(floatIntent, lastRunningId, runningId)
+  lastRunningId = runningId
+  const visible = desktopVisibility(s, running !== null, fullscreenNow, floatIntent, reminder)
+  timerWindow.update(running, visible.timer, s.hideInFullscreen)
+
+  if (floatWin && floatReady) {
+    macWorkspaces.update(floatWin, floatMayCoverMacFullscreen(visible.float, s.hideInFullscreen, floatIntent, reminder))
   }
-  if (!floatWin || floatWin.isDestroyed()) return createFloatWindow()
-  const reminder = center.get()
-  // 全屏时隐藏；但强提醒（睡眠）仍然要露面
-  const hide = floatHiddenByUser || (s.hideInFullscreen && fullscreenNow && !reminder?.strong)
-  if (hide) floatWin.hide()
-  else if (!floatWin.isVisible()) floatWin.showInactive()
+  if (!visible.float) {
+    if (!s.floatingEnabled) floatWin?.destroy()
+    else floatWin?.hide()
+  } else if (!floatWin) {
+    createFloatWindow()
+  } else if (floatReady) {
+    if (!floatWin.isVisible()) floatWin.showInactive()
+    focusCapture()
+  }
+}
+
+function focusCapture(): void {
+  if (!focusCaptureWhenReady || !floatReady || !floatBridgeReady || !floatWin?.isVisible()) return
+  focusCaptureWhenReady = false
+  floatWin.show()
+  floatWin.focus()
+  floatWin.webContents.send('focus-capture')
+}
+
+function revealFloat(capture = false): void {
+  floatIntent = 'show'
+  focusCaptureWhenReady = capture
+  updateDesktopVisibility()
+  updateTray()
+}
+
+function concealFloat(): void {
+  floatIntent = 'hide'
+  focusCaptureWhenReady = false
+  updateDesktopVisibility()
+  updateTray()
 }
 
 /** 快捷键：唤出悬浮窗并聚焦速记框 */
 function toggleCapture(): void {
-  floatHiddenByUser = false
-  if (!floatWin || floatWin.isDestroyed()) {
-    createFloatWindow()
-    floatWin!.webContents.once('did-finish-load', () => toggleCapture())
-    return
-  }
-  floatWin.show()
-  floatWin.focus()
-  floatWin.webContents.send('focus-capture')
+  revealFloat(true)
 }
 
 // ---------- 托盘 ----------
 
 function watchTheme(): void {
   // 跟随系统时，系统切换深浅色后主窗口底色也跟着换
-  nativeTheme.on('updated', () => mainWin?.setBackgroundColor(windowBg()))
+  nativeTheme.on('updated', syncMainWindowTheme)
+}
+
+/** macOS 的全局菜单栏：Electron 默认菜单是英文的，这里换成中文，并保留编辑/窗口的标准角色 */
+function createAppMenu(): void {
+  if (!isMac) return
+  const template: Electron.MenuItemConstructorOptions[] = [
+    {
+      label: app.getName(),
+      submenu: [
+        { role: 'about', label: '关于计划与复盘' },
+        { type: 'separator' },
+        { role: 'hide', label: '隐藏计划与复盘' },
+        { role: 'hideOthers', label: '隐藏其他' },
+        { role: 'unhide', label: '显示全部' },
+        { type: 'separator' },
+        { role: 'quit', label: '退出计划与复盘' }
+      ]
+    },
+    {
+      label: '编辑',
+      submenu: [
+        { role: 'undo', label: '撤销' },
+        { role: 'redo', label: '重做' },
+        { type: 'separator' },
+        { role: 'cut', label: '剪切' },
+        { role: 'copy', label: '复制' },
+        { role: 'paste', label: '粘贴' },
+        { role: 'selectAll', label: '全选' }
+      ]
+    },
+    {
+      label: '窗口',
+      submenu: [
+        { role: 'minimize', label: '最小化' },
+        { role: 'zoom', label: '缩放' },
+        { role: 'close', label: '关闭窗口' },
+        { type: 'separator' },
+        { label: '打开主窗口', click: showMain },
+        { role: 'front', label: '前置全部窗口' }
+      ]
+    },
+    {
+      label: '帮助',
+      submenu: [
+        {
+          label: '项目主页',
+          click: () => shell.openExternal('https://github.com/Anthony-xyr/PlanReview')
+        }
+      ]
+    }
+  ]
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
 function createTray(): void {
-  tray = new Tray(nativeImage.createFromPath(resource('tray.png')))
+  tray = new Tray(trayIcon('idle'))
   tray.setToolTip('计划与复盘')
-  tray.on('click', showMain)
+  // macOS 上点击托盘图标会直接弹出菜单（菜单第一项就是打开主窗口）；Windows 左键直接开窗口
+  if (isMac) tray.setIgnoreDoubleClickEvents(true)
+  else tray.on('click', showMain)
   updateTray()
 }
 
@@ -453,21 +602,20 @@ function updateTray(): void {
   if (!tray) return
   const running = time.running()
   const s = time.getSettings()
-  tray.setImage(nativeImage.createFromPath(resource(running ? 'tray-running.png' : 'tray.png')))
+  const floatShown = desktopVisibility(s, running !== null, fullscreenNow, floatIntent, center.get()).float
+  tray.setImage(trayIcon(running ? 'running' : 'idle'))
   tray.setToolTip(running ? `计时中：${running.title}` : '计划与复盘')
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: '打开主窗口', click: showMain },
-      { label: `速记（${s.hotkey}）`, click: toggleCapture },
-      {
-        label: s.floatingEnabled && !floatHiddenByUser ? '隐藏悬浮窗' : '显示悬浮窗',
-        click: () => {
-          if (!s.floatingEnabled) time.updateSettings({ floatingEnabled: true })
-          else floatHiddenByUser = !floatHiddenByUser
-          updateFloatVisibility()
-          updateTray()
-        }
-      },
+      { label: `速记（${hotkeyLabel(s.hotkey, process.platform)}）`, click: toggleCapture },
+      ...(isMac
+        ? [
+            // 在另一个 Space 的窗口也可能被 Electron 视作可见，始终保留主动唤出的入口。
+            { label: '显示悬浮窗', click: () => revealFloat() },
+            ...(floatShown ? [{ label: '隐藏悬浮窗', click: concealFloat }] : [])
+          ]
+        : [{ label: floatShown ? '隐藏悬浮窗' : '显示悬浮窗', click: () => (floatShown ? concealFloat() : revealFloat()) }]),
       { type: 'separator' },
       ...(running ? [{ label: `结束本次：${running.title}`, click: () => sendCommand('stop') }] : []),
       { label: '收尾', click: () => sendCommand('wrap-up') },
@@ -497,29 +645,37 @@ function applySettings(s: Settings): void {
     }
     registeredHotkey = hotkeyRegistered ? s.hotkey : ''
   }
-  if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: s.launchAtLogin, args: ['--hidden'] })
+  if (app.isPackaged) {
+    // 只在状态变化时写系统登录项：每次启动都写的话，未签名的包会被 macOS 拒绝并打一条错误。
+    // Windows 的登录项带 --hidden 参数；读取时必须传入同一组 args，否则 Electron 会认为
+    // 该项不存在，取消勾选时就不会删除 Run 值。
+    const current = app.getLoginItemSettings(isMac ? undefined : { args: ['--hidden'] }).openAtLogin
+    if (current !== s.launchAtLogin) {
+      // macOS 的登录项不接收启动参数，靠 wasOpenedAtLogin 判断；Windows 用 --hidden
+      if (isMac) app.setLoginItemSettings({ openAtLogin: s.launchAtLogin })
+      else app.setLoginItemSettings({ openAtLogin: s.launchAtLogin, args: ['--hidden'] })
+    }
+  }
   // 界面的深浅色走 CSS 的 prefers-color-scheme，这里定下它取系统的还是固定一种
   nativeTheme.themeSource = s.theme
-  mainWin?.setBackgroundColor(windowBg())
-  updateFloatVisibility()
-  updateTray()
+  syncMainWindowTheme()
 }
 
 // ---------- 提醒循环 ----------
 
 function tick(): void {
+  if (quitting) return
   const now = new Date()
   const settings = time.getSettings()
-  const { start, end } = dayRange(dayOf(now, settings.dayStartHour), settings.dayStartHour)
-  const reminder = center.evaluate({
-    now,
-    settings,
-    running: time.running(),
-    blocks: time.listBlocks(start.toISOString(), new Date(end.getTime() + 6 * 3_600_000).toISOString())
-  })
+  const snapshot = reminderSnapshot(time, now, settings)
+  const { running } = snapshot
+  const reminder = center.evaluate(snapshot)
 
-  const full = settings.hideInFullscreen ? isFullscreenAppActive() === true : false
-  if (full !== fullscreenNow) fullscreenNow = full
+  const full = isWindows && settings.hideInFullscreen && isFullscreenAppActive() === true
+  if (full !== fullscreenNow) {
+    fullscreenNow = full
+    if (full && floatIntent === 'show') floatIntent = 'auto'
+  }
 
   // 内容变化就重新推送（比如同一个睡眠提醒，开始计时后文字要跟着变）
   const sig = reminder ? JSON.stringify({ ...reminder, fresh: undefined }) : null
@@ -527,8 +683,9 @@ function tick(): void {
     lastReminderSig = sig
     for (const w of allWindows()) w.webContents.send('reminder', reminder)
   }
+  floatIntent = floatIntentAfterReminder(floatIntent, reminder)
+  updateDesktopVisibility(settings, running, reminder)
   if (reminder?.fresh) notify(reminder, settings)
-  updateFloatVisibility()
   updateTray()
 }
 
@@ -542,15 +699,17 @@ function notify(r: Reminder, s: Settings): void {
     body: r.body,
     silent: !(r.strong && s.strongSound),
     urgency: r.strong ? 'critical' : 'normal',
-    icon: resource('icon.png')
+    // macOS 的通知不读自定义图标，直接显示应用图标
+    ...(isMac ? {} : { icon: resource('icon.png') })
   })
-  n.on('click', () => (floatVisible ? floatWin?.show() : showMain()))
+  n.on('click', () => (time.getSettings().floatingEnabled ? revealFloat() : showMain()))
   n.show()
 }
 
 // ---------- 启动 ----------
 
-// 开发版和安装版用同一个数据目录（%APPDATA%\plan-review），装好后之前的数据还在。
+// 开发版和安装版用同一个数据目录：Windows 在 %APPDATA%\plan-review，macOS 在
+// ~/Library/Application Support/plan-review，装好后之前的数据还在。
 // 要在 requestSingleInstanceLock 之前设，单实例锁也放在这个目录里
 app.setPath('userData', join(app.getPath('appData'), 'plan-review'))
 
@@ -560,19 +719,38 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', showMain)
 
   app.whenReady().then(() => {
-    app.setAppUserModelId('plan-review')
+    if (isWindows) app.setAppUserModelId('plan-review')
+    // 开发时 Dock 默认是 Electron 的图标，换成应用自己的；打包后由 .icns 决定
+    if (isMac && !app.isPackaged) app.dock?.setIcon(resource('icon.png'))
+    if (process.argv.includes('--hidden') || (isMac && app.getLoginItemSettings().wasOpenedAtLogin)) {
+      suppressActivateUntil = Date.now() + 3000
+    }
+    createAppMenu()
     openDatabase()
     registerIpc()
+    const settings = time.getSettings()
+    // 创建窗口前设置主题，让首帧、页面媒体查询和原生按钮颜色一致。
+    nativeTheme.themeSource = settings.theme
     createMainWindow()
     createTray()
     watchTheme()
-    applySettings(time.getSettings())
+    applySettings(settings)
     tick()
-    setInterval(tick, TICK_MS)
+    tickInterval = setInterval(tick, TICK_MS)
+  })
+
+  // macOS：点 Dock 图标时把主窗口叫回来（窗口被缩到托盘后也有效）
+  if (isMac) app.on('activate', () => {
+    if (Date.now() < suppressActivateUntil) return
+    showMain()
   })
 
   app.on('before-quit', () => (quitting = true))
-  app.on('will-quit', () => globalShortcut.unregisterAll())
+  app.on('will-quit', () => {
+    clearInterval(tickInterval)
+    timerWindow.dispose()
+    globalShortcut.unregisterAll()
+  })
   // 有托盘时关闭所有窗口也不退出
   app.on('window-all-closed', () => {
     if (!tray) app.quit()

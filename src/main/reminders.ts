@@ -1,6 +1,9 @@
+import type { DatabaseSync } from 'node:sqlite'
 import type { PlanBlock, Reminder, ReminderKind, Settings, TimeEntry } from '@shared/types'
 import type { TimeRepo } from './db/timeRepo'
 import { nextClock, sleepWindow } from './db/timeRepo'
+import { BLOCK_END_GRACE_MS, blockEndDue, blockEndKey, rememberDismissal } from './reminderDismissals'
+import { dayOf, dayRange } from '@shared/time'
 
 /**
  * 提醒规则（纯逻辑，不碰窗口）。
@@ -10,6 +13,8 @@ import { nextClock, sleepWindow } from './db/timeRepo'
 const MIN = 60_000
 /** 计划块开始提醒的有效期：错过太久就不再提醒 */
 const BLOCK_START_GRACE = 10 * MIN
+/** 关闭记录保留多久：提醒的标识都带日期或计时，过了这么久不会再被触发 */
+const DISMISS_KEEP_MS = 7 * 24 * 60 * MIN
 
 // 优先级：越靠前越重要，同一时刻只显示一个
 const PRIORITY: ReminderKind[] = ['sleep', 'sleep-lead', 'leave', 'session-end', 'block-end', 'block-start']
@@ -18,8 +23,14 @@ export interface Snapshot {
   now: Date
   settings: Settings
   running: TimeEntry | null
-  /** 今天剩下的计划（含正在进行的） */
+  /** 今天的计划，以及日界前仍在提醒有效期内的计划 */
   blocks: PlanBlock[]
+}
+
+export function reminderSnapshot(time: TimeRepo, now: Date, settings = time.getSettings()): Snapshot {
+  const { start, end } = dayRange(dayOf(now, settings.dayStartHour), settings.dayStartHour)
+  const from = new Date(Math.min(start.getTime(), now.getTime() - BLOCK_END_GRACE_MS))
+  return { now, settings, running: time.running(), blocks: time.listBlocks(from.toISOString(), new Date(end.getTime() + 6 * 3_600_000).toISOString()) }
 }
 
 interface Candidate {
@@ -133,10 +144,10 @@ export function candidates(s: Snapshot): Candidate[] {
         })
       }
 
-      // 保留时段（娱乐等）结束：没有任务的计划块到点提醒
-      if (!b.taskId && now >= end && now.getTime() - end.getTime() < 30 * MIN) {
+      // 正在计时的保留时段只用本次到点提醒（目标可能已延长）
+      if (!b.taskId && !isCurrentWork && blockEndDue(end, now)) {
         out.push({
-          key: `block-end:${b.id}:${b.endAt}`,
+          key: blockEndKey(b.id, b.endAt),
           group: `block-end:${b.id}`,
           kind: 'block-end',
           strong: false,
@@ -151,7 +162,10 @@ export function candidates(s: Snapshot): Candidate[] {
   return out.sort((a, b) => PRIORITY.indexOf(a.kind) - PRIORITY.indexOf(b.kind))
 }
 
-/** 有状态的提醒中心：记住关闭和稍后，向外给出当前要显示的提醒 */
+/**
+ * 有状态的提醒中心：记住关闭和稍后，向外给出当前要显示的提醒。
+ * 关闭记录存进数据库，重启后也记得；稍后只管几分钟，只放在内存里。
+ */
 export class ReminderCenter {
   private dismissedKeys = new Set<string>()
   private dismissedGroups = new Set<string>()
@@ -159,16 +173,31 @@ export class ReminderCenter {
   private seen = new Set<string>()
   private current: (Reminder & { key: string; group: string }) | null = null
 
-  constructor(private time: TimeRepo) {}
+  constructor(
+    private time: TimeRepo,
+    private db: DatabaseSync,
+    private now: () => Date = () => new Date()
+  ) {
+    const cutoff = new Date(this.now().getTime() - DISMISS_KEEP_MS).toISOString()
+    this.db.prepare('DELETE FROM reminder_dismissals WHERE created_at < ?').run(cutoff)
+    const rows = this.db.prepare('SELECT scope, value FROM reminder_dismissals').all() as { scope: 'once' | 'group'; value: string }[]
+    for (const r of rows) (r.scope === 'group' ? this.dismissedGroups : this.dismissedKeys).add(r.value)
+  }
+
+  private remember(scope: 'once' | 'group', value: string): void {
+    rememberDismissal(this.db, scope, value, this.now())
+  }
 
   /** 计算当前提醒；返回值变化时需要通知界面 */
   evaluate(s: Snapshot): Reminder | null {
     const t = s.now.getTime()
     for (const [k, until] of this.snoozed) if (until <= t) this.snoozed.delete(k)
 
-    const pick = candidates(s).find(
-      (c) => !this.dismissedKeys.has(c.key) && !this.dismissedGroups.has(c.group) && !this.snoozed.has(c.group)
-    )
+    const pick = candidates(s).find((c) => {
+      if (this.dismissedKeys.has(c.key) || this.dismissedGroups.has(c.group) || this.snoozed.has(c.group)) return false
+      // 结束计时时 TimeRepo 可以写入新的关闭记录，不能只用启动时加载的集合。
+      return c.kind !== 'block-end' || !this.db.prepare("SELECT 1 FROM reminder_dismissals WHERE scope = 'once' AND value = ?").get(c.key)
+    })
     if (!pick) {
       this.current = null
       return null
@@ -208,7 +237,11 @@ export class ReminderCenter {
 
   dismiss(id: string, scope: 'once' | 'group' = 'once'): void {
     this.dismissedKeys.add(id)
-    if (scope === 'group' && this.current?.key === id) this.dismissedGroups.add(this.current.group)
+    this.remember('once', id)
+    if (scope === 'group' && this.current?.key === id) {
+      this.dismissedGroups.add(this.current.group)
+      this.remember('group', this.current.group)
+    }
     if (this.current?.key === id) this.current = null
   }
 

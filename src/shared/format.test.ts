@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatMinutes, parseMinutes } from './format'
+import { formatMinutes, hotkeyLabel, parseMinutes } from './format'
 
 describe('minutes', () => {
   it('格式化', () => {
@@ -25,4 +25,15 @@ it('截止日期是否已过', async () => {
   expect(isOverdue('2026-10-21', '2026-10-25')).toBe(true)
   expect(isOverdue('2026-10-25', '2026-10-25')).toBe(false)
   expect(isOverdue(null, '2026-10-25')).toBe(false)
+})
+
+describe('hotkeyLabel', () => {
+  it('Windows 原样显示', () => {
+    expect(hotkeyLabel('Alt+Shift+Space', 'win32')).toBe('Alt+Shift+Space')
+  })
+
+  it('macOS 用系统叫法', () => {
+    expect(hotkeyLabel('Alt+Shift+Space', 'darwin')).toBe('Option+Shift+Space')
+    expect(hotkeyLabel('Super+Shift+Space', 'darwin')).toBe('Command+Shift+Space')
+  })
 })

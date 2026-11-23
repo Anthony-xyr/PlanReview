@@ -88,6 +88,7 @@ export interface BlockInput {
   categoryId?: string | null
   startAt: string
   endAt: string
+  location?: string
 }
 
 export interface EntryInput extends BlockInput {
@@ -483,7 +484,15 @@ export interface PlanSuggestion {
 
 export interface SystemStatus {
   hotkeyRegistered: boolean
+  /** Windows 上靠系统接口检测；macOS 由系统的全屏桌面（Space）天然隔离，不需要检测 */
   fullscreenDetection: boolean
+  platform: 'win32' | 'darwin' | 'linux'
+}
+
+export interface TimerOverlayState {
+  entry: Pick<TimeEntry, 'id' | 'title' | 'startAt' | 'targetEndAt'> | null
+  maxWidth: number
+  hovered: boolean
 }
 
 export interface TaskInput {
@@ -539,7 +548,9 @@ export interface Api {
   plan: {
     /** 与 [from, to) 有重叠的计划时段 */
     list(from: string, to: string): Promise<PlanBlock[]>
+    startedIds(from: string, to: string): Promise<string[]>
     create(input: BlockInput): Promise<PlanBlock>
+    copy(id: string, startAt: string): Promise<PlanBlock>
     update(id: string, patch: Partial<BlockInput>): Promise<PlanBlock>
     remove(id: string): Promise<void>
   }
@@ -572,8 +583,16 @@ export interface Api {
     openMain(cmd?: MainCommand): Promise<void>
     showFloat(): Promise<void>
     hideFloat(): Promise<void>
+    floatReady(): Promise<void>
     resizeFloat(height: number): Promise<void>
     status(): Promise<SystemStatus>
+    platform: string
+  }
+  timer: {
+    state(): Promise<TimerOverlayState>
+    resize(width: number): Promise<void>
+    onState(cb: (state: TimerOverlayState) => void): () => void
+    onHover(cb: (hovered: boolean) => void): () => void
   }
   settings: {
     get(): Promise<Settings>
