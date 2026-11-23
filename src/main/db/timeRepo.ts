@@ -173,6 +173,15 @@ export class TimeRepo {
     return rows.map(toBlock)
   }
 
+  /** 区间内的计划有哪些被计时过。提前开始的记录本身可能在前一天。 */
+  startedBlockIds(from: string, to: string): string[] {
+    const rows = this.db.prepare(`
+      SELECT DISTINCT e.plan_block_id AS id FROM time_entries e JOIN plan_blocks b ON b.id = e.plan_block_id
+      WHERE e.source = 'timer' AND b.start_at < ? AND b.end_at > ?
+    `).all(iso(to, '结束'), iso(from, '开始')) as { id: string }[]
+    return rows.map((row) => row.id)
+  }
+
   getBlock(id: string): PlanBlock | null {
     const row = this.db.prepare(`${BLOCK_SELECT} WHERE b.id = ?`).get(id) as BlockRow | undefined
     return row ? toBlock(row) : null

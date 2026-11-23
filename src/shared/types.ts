@@ -487,6 +487,12 @@ export interface SystemStatus {
   fullscreenDetection: boolean
 }
 
+export interface TimerOverlayState {
+  entry: Pick<TimeEntry, 'id' | 'title' | 'startAt' | 'targetEndAt'> | null
+  maxWidth: number
+  hovered: boolean
+}
+
 export interface TaskInput {
   title?: string
   notes?: string
@@ -540,6 +546,7 @@ export interface Api {
   plan: {
     /** 与 [from, to) 有重叠的计划时段 */
     list(from: string, to: string): Promise<PlanBlock[]>
+    startedIds(from: string, to: string): Promise<string[]>
     create(input: BlockInput): Promise<PlanBlock>
     copy(id: string, startAt: string): Promise<PlanBlock>
     update(id: string, patch: Partial<BlockInput>): Promise<PlanBlock>
@@ -574,9 +581,16 @@ export interface Api {
     openMain(cmd?: MainCommand): Promise<void>
     showFloat(): Promise<void>
     hideFloat(): Promise<void>
+    floatReady(): Promise<void>
     resizeFloat(height: number): Promise<void>
     status(): Promise<SystemStatus>
     platform: string
+  }
+  timer: {
+    state(): Promise<TimerOverlayState>
+    resize(width: number): Promise<void>
+    onState(cb: (state: TimerOverlayState) => void): () => void
+    onHover(cb: (hovered: boolean) => void): () => void
   }
   settings: {
     get(): Promise<Settings>

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Api, MainCommand, Reminder } from '@shared/types'
+import type { Api, MainCommand, Reminder, TimerOverlayState } from '@shared/types'
 
 const call =
   (channel: string) =>
@@ -35,6 +35,7 @@ const api: Api & { onFocusCapture(cb: () => void): () => void } = {
   tags: { list: call('tags:list') } as Api['tags'],
   plan: {
     list: call('plan:list'),
+    startedIds: call('plan:startedIds'),
     create: call('plan:create'),
     copy: call('plan:copy'),
     update: call('plan:update'),
@@ -67,10 +68,17 @@ const api: Api & { onFocusCapture(cb: () => void): () => void } = {
     openMain: call('win:openMain'),
     showFloat: call('win:showFloat'),
     hideFloat: call('win:hideFloat'),
+    floatReady: call('win:floatReady'),
     resizeFloat: call('win:resizeFloat'),
     status: call('win:status'),
     platform: process.platform
   } as Api['win'],
+  timer: {
+    state: call('timer:state'),
+    resize: call('timer:resize'),
+    onState: (cb) => on<TimerOverlayState>('timer-state', cb),
+    onHover: (cb) => on<boolean>('timer-hover', cb)
+  } as Api['timer'],
   ai: {
     getConfig: call('ai:getConfig'),
     setConfig: call('ai:setConfig'),
@@ -122,4 +130,5 @@ const api: Api & { onFocusCapture(cb: () => void): () => void } = {
   onFocusCapture: (cb: () => void) => on('focus-capture', cb)
 }
 
-contextBridge.exposeInMainWorld('api', api)
+// 顶部只显示信息，不给它任务、设置等写接口。
+contextBridge.exposeInMainWorld('api', process.argv.includes('--planreview-timer') ? { timer: api.timer } : api)
