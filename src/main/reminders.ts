@@ -2,7 +2,8 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { PlanBlock, Reminder, ReminderKind, Settings, TimeEntry } from '@shared/types'
 import type { TimeRepo } from './db/timeRepo'
 import { nextClock, sleepWindow } from './db/timeRepo'
-import { blockEndDue, blockEndKey, rememberDismissal } from './reminderDismissals'
+import { BLOCK_END_GRACE_MS, blockEndDue, blockEndKey, rememberDismissal } from './reminderDismissals'
+import { dayOf, dayRange } from '@shared/time'
 
 /**
  * 提醒规则（纯逻辑，不碰窗口）。
@@ -22,8 +23,14 @@ export interface Snapshot {
   now: Date
   settings: Settings
   running: TimeEntry | null
-  /** 今天剩下的计划（含正在进行的） */
+  /** 今天的计划，以及日界前仍在提醒有效期内的计划 */
   blocks: PlanBlock[]
+}
+
+export function reminderSnapshot(time: TimeRepo, now: Date, settings = time.getSettings()): Snapshot {
+  const { start, end } = dayRange(dayOf(now, settings.dayStartHour), settings.dayStartHour)
+  const from = new Date(Math.min(start.getTime(), now.getTime() - BLOCK_END_GRACE_MS))
+  return { now, settings, running: time.running(), blocks: time.listBlocks(from.toISOString(), new Date(end.getTime() + 6 * 3_600_000).toISOString()) }
 }
 
 interface Candidate {

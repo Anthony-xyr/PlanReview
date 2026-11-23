@@ -15,11 +15,11 @@ import type {
   Settings,
   SystemStatus
 } from '@shared/types'
-import { dayOf, dayRange } from '@shared/time'
+import { dayRange } from '@shared/time'
 import { migrate } from './db/schema'
 import { Repo } from './db/repo'
 import { TimeRepo, sleepWindow } from './db/timeRepo'
-import { ReminderCenter } from './reminders'
+import { ReminderCenter, reminderSnapshot } from './reminders'
 import { isFullscreenAppActive } from './native'
 import { CourseRepo } from './db/courseRepo'
 import { AiConfigStore } from './ai/config'
@@ -510,13 +510,7 @@ function applySettings(s: Settings): void {
 function tick(): void {
   const now = new Date()
   const settings = time.getSettings()
-  const { start, end } = dayRange(dayOf(now, settings.dayStartHour), settings.dayStartHour)
-  const reminder = center.evaluate({
-    now,
-    settings,
-    running: time.running(),
-    blocks: time.listBlocks(start.toISOString(), new Date(end.getTime() + 6 * 3_600_000).toISOString())
-  })
+  const reminder = center.evaluate(reminderSnapshot(time, now, settings))
 
   const full = settings.hideInFullscreen ? isFullscreenAppActive() === true : false
   if (full !== fullscreenNow) fullscreenNow = full

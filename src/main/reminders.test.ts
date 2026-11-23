@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { migrate } from './db/schema'
 import { Repo } from './db/repo'
 import { DEFAULT_SETTINGS, nextClock, sleepWindow, TimeRepo } from './db/timeRepo'
-import { candidates, ReminderCenter, type Snapshot } from './reminders'
+import { candidates, ReminderCenter, reminderSnapshot, type Snapshot } from './reminders'
 
 // 测试用本地时间
 const local = (h: number, m = 0, dayOffset = 0) => new Date(2026, 9, 15 + dayOffset, h, m)
@@ -121,6 +121,41 @@ describe('自由计划块与本次计时', () => {
     expect(center.evaluate(snap())?.kind).toBe('block-end')
     clock = local(15, 30)
     expect(center.evaluate(snap())).toBeNull()
+  })
+
+  it('从选择器提前启动跨零点自由计划，延长到新目标且不补弹', () => {
+    time.updateSettings({ dayStartHour: 0, leaveEnabled: false, sleepStart: '03:00', sleepEnd: '04:00', sleepLeadMin: 0 })
+    clock = local(23, 40)
+    const block = time.createBlock({ title: '跨日计划', startAt: local(23, 55).toISOString(), endAt: local(0, 10, 1).toISOString() })
+    // 悬浮窗提前开始传原时长和 planBlockId，不改计划时段。
+    const started = time.start({ title: block.title, planBlockId: block.id, durationMin: 15 })
+    expect(started.targetEndAt).toBe(local(23, 55).toISOString())
+    clock = local(23, 54)
+    expect(time.extend(25).targetEndAt).toBe(local(0, 20, 1).toISOString())
+    clock = local(0, 10, 1)
+    const center = newCenter()
+    expect(center.evaluate(reminderSnapshot(time, clock))).toBeNull()
+    clock = local(0, 20, 1)
+    expect(center.evaluate(reminderSnapshot(time, clock))?.kind).toBe('session-end')
+    time.stop({})
+    expect(newCenter().evaluate(reminderSnapshot(time, clock))).toBeNull()
+    expect(time.getBlock(block.id)?.endAt).toBe(block.endAt)
+  })
+
+  it('越过自定义日界时仍检查前半小时的块，只跳过实际计时过的块', () => {
+    time.updateSettings({ dayStartHour: 5, leaveEnabled: false, sleepStart: '03:00', sleepEnd: '04:00', sleepLeadMin: 0 })
+    clock = local(4, 40)
+    const target = time.createBlock({ title: '提前开始', startAt: local(4, 42).toISOString(), endAt: local(4, 55).toISOString() })
+    const other = time.createBlock({ title: '没开始', startAt: local(4, 43).toISOString(), endAt: local(4, 56).toISOString() })
+    time.start({ title: target.title, planBlockId: target.id, durationMin: 13 })
+    time.extend(15)
+    clock = local(5, 5)
+    const center = newCenter()
+    expect(center.evaluate(reminderSnapshot(time, clock))?.blockId).toBe(other.id)
+    time.stop({})
+    expect(newCenter().evaluate(reminderSnapshot(time, clock))?.blockId).toBe(other.id)
+    clock = local(5, 26)
+    expect(center.evaluate(reminderSnapshot(time, clock))).toBeNull()
   })
 })
 
