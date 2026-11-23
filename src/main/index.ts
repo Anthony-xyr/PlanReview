@@ -61,7 +61,7 @@ function openDatabase(): void {
   migrate(db)
   repo = new Repo(db)
   time = new TimeRepo(db)
-  center = new ReminderCenter(time)
+  center = new ReminderCenter(time, db)
   courses = new CourseRepo(db)
   review = new ReviewRepo(db, repo, time)
   weekly = new WeeklyRepo(db, repo, time)

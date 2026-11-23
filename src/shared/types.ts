@@ -88,6 +88,7 @@ export interface BlockInput {
   categoryId?: string | null
   startAt: string
   endAt: string
+  location?: string
 }
 
 export interface EntryInput extends BlockInput {
