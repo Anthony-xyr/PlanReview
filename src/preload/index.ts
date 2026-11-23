@@ -36,6 +36,7 @@ const api: Api & { onFocusCapture(cb: () => void): () => void } = {
   plan: {
     list: call('plan:list'),
     create: call('plan:create'),
+    copy: call('plan:copy'),
     update: call('plan:update'),
     remove: call('plan:remove')
   } as Api['plan'],

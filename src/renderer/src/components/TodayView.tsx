@@ -17,10 +17,7 @@ import {
 } from '@shared/time'
 import { BlockDialog, type BlockDraft } from './BlockDialog'
 import { ResurfacePanel } from './Resurface'
-
-const PX_PER_MIN = 1.1
-const DAY_MIN = 1440
-const DRAG_THRESHOLD = 4
+import { advanceItemDrag, copyModifier, DAY_MIN, itemDrop, PX_PER_MIN, type Drag } from './timelineDrag'
 
 interface Props {
   settings: Settings
@@ -36,11 +33,6 @@ interface Props {
 }
 
 type Kind = 'plan' | 'entry'
-
-/** 正在进行的鼠标操作：在空白处拖出新时段、移动、拉伸 */
-type Drag =
-  | { op: 'create'; kind: Kind; anchor: number; cur: number }
-  | { op: 'move' | 'resize'; kind: Kind; id: string; start: number; end: number; grab: number; moved: boolean }
 
 export function TodayView({ settings, categories, version, mutate, running, onStartTimer, onOpenInbox, onOpenReview, onOpenPlanner, notify }: Props) {
   const [day, setDay] = useState(() => dayOf(new Date(), settings.dayStartHour))
@@ -120,41 +112,70 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
 
   // 拖拽状态同时存在 ref 里：pointerup 可能在界面重绘之前到达，必须读到最新值
   const dragRef = useRef<Drag | null>(null)
+  const pointerOwner = useRef<Element | null>(null)
   const dragging = drag !== null
+  const isMac = navigator.platform.startsWith('Mac')
 
   const updateDrag = (d: Drag | null) => {
+    const pointerId = dragRef.current?.pointerId
     dragRef.current = d
     setDrag(d)
+    if (!d) {
+      const owner = pointerOwner.current
+      pointerOwner.current = null
+      if (pointerId !== undefined && owner?.hasPointerCapture(pointerId)) owner.releasePointerCapture(pointerId)
+    }
   }
 
   useEffect(() => {
     if (!dragging) return
-    const onMove = (e: PointerEvent) => {
+    const onKey = (e: KeyboardEvent) => {
       const d = dragRef.current
       if (!d) return
-      const m = minuteAt(e.clientY)
-      if (d.op === 'create') return updateDrag({ ...d, cur: m })
-      const moved = d.moved || Math.abs((m - d.grab) * PX_PER_MIN) > DRAG_THRESHOLD
-      if (d.op === 'move') {
-        const len = d.end - d.start
-        const s = clamp(d.start + snap(m - d.grab), 0, DAY_MIN - len)
-        return updateDrag({ ...d, moved, grab: d.grab + (s - d.start), start: s, end: s + len })
+      if (e.key === 'Escape' && e.type === 'keydown') {
+        e.preventDefault()
+        updateDrag(null)
+      } else if (d.op === 'move' && d.kind === 'plan') {
+        const copyHeld = copyModifier(e, isMac)
+        if (copyHeld !== d.copyHeld) updateDrag({ ...d, copyHeld })
       }
-      updateDrag({ ...d, moved, end: clamp(snap(m), d.start + 15, DAY_MIN) })
     }
-    const onUp = () => {
-      const d = dragRef.current
-      updateDrag(null)
-      if (d) commitDrag(d)
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
+    const onBlur = () => updateDrag(null)
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('keyup', onKey)
+    window.addEventListener('blur', onBlur)
     return () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keyup', onKey)
+      window.removeEventListener('blur', onBlur)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dragging])
+  }, [dragging, isMac])
+
+  const pointerDrag = (e: React.PointerEvent): Drag | null => {
+    const d = dragRef.current
+    if (!d || d.pointerId !== e.pointerId) return null
+    const m = minuteAt(e.clientY)
+    if (d.op === 'create') return { ...d, cur: m }
+    const hit = document.elementFromPoint(e.clientX, e.clientY)
+    const onPlan = d.kind === 'plan' && !!hit && e.currentTarget.contains(hit)
+    return advanceItemDrag(d, m, copyModifier(e, isMac), onPlan)
+  }
+
+  const onPointerMove = (e: React.PointerEvent) => {
+    const d = pointerDrag(e)
+    if (d) updateDrag(d)
+  }
+
+  const onPointerUp = (e: React.PointerEvent) => {
+    const d = pointerDrag(e)
+    if (!d) return
+    updateDrag(null)
+    commitDrag(d)
+  }
+
+  const cancelPointer = (e: React.PointerEvent) => {
+    if (dragRef.current?.pointerId === e.pointerId) updateDrag(null)
+  }
 
   const commitDrag = (d: Drag) => {
     if (d.op === 'create') {
@@ -176,26 +197,41 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
       return
     }
     if (!d.moved) {
+      if (d.op === 'move' && d.kind === 'plan' && d.copyHeld) return
       // 没拖动就是点击：打开编辑
       const item = d.kind === 'plan' ? blocks.find((b) => b.id === d.id) : entries.find((e) => e.id === d.id)
       if (item) setDraft({ kind: d.kind, id: item.id, taskId: item.taskId, title: item.title, categoryId: item.categoryId, startAt: item.startAt, endAt: item.endAt ?? null })
       return
     }
-    const patch = { startAt: addMinutes(dayStart, d.start).toISOString(), endAt: addMinutes(dayStart, d.end).toISOString() }
+    const drop = itemDrop(d)
+    if (!drop.valid) return
+    const patch = { startAt: addMinutes(dayStart, drop.span.start).toISOString(), endAt: addMinutes(dayStart, drop.span.end).toISOString() }
+    if (drop.op === 'copy') {
+      mutate(() => window.api.plan.copy(d.id, patch.startAt))
+      return
+    }
     mutate<unknown>(() => (d.kind === 'plan' ? window.api.plan.update(d.id, patch) : window.api.entries.update(d.id, patch)))
   }
 
   const beginCreate = (kind: Kind) => (e: React.PointerEvent) => {
-    if (e.button !== 0 || e.target !== e.currentTarget) return
+    if (e.button !== 0 || dragRef.current || e.target !== e.currentTarget) return
     const m = minuteAt(e.clientY)
     if (kind === 'entry' && m > nowMin) return
-    updateDrag({ op: 'create', kind, anchor: m, cur: m })
+    e.currentTarget.setPointerCapture(e.pointerId)
+    pointerOwner.current = e.currentTarget
+    updateDrag({ op: 'create', kind, pointerId: e.pointerId, anchor: m, cur: m })
   }
 
-  const beginItem = (kind: Kind, id: string, s: number, en: number, op: 'move' | 'resize') => (e: React.PointerEvent) => {
-    if (e.button !== 0) return
+  const beginItem = (kind: Kind, id: string, s: number, en: number, fullStart: number, fullEnd: number, op: 'move' | 'resize') => (e: React.PointerEvent) => {
+    if (e.button !== 0 || dragRef.current) return
     e.stopPropagation()
-    updateDrag({ op, kind, id, start: s, end: en, grab: minuteAt(e.clientY), moved: false })
+    e.currentTarget.setPointerCapture(e.pointerId)
+    pointerOwner.current = e.currentTarget
+    const grab = minuteAt(e.clientY)
+    updateDrag({
+      op, kind, id, pointerId: e.pointerId, origin: { start: s, end: en }, copyOrigin: { start: fullStart, end: fullEnd },
+      grab, pointer: grab, moved: false, copyHeld: copyModifier(e, isMac), onPlan: kind === 'plan'
+    })
   }
 
   // ---------- 放置任务（从左侧列表拖进计划列） ----------
@@ -222,10 +258,14 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
         ? blocks.map((b) => ({ id: b.id, title: b.title, cat: b.categoryId, s: minutesFrom(dayStart, b.startAt), e: minutesFrom(dayStart, b.endAt), done: b.taskStatus === 'done', live: false, taskId: b.taskId, course: !!b.courseId, loc: b.location }))
         : entries.map((en) => ({ id: en.id, title: en.title, cat: en.categoryId, s: minutesFrom(dayStart, en.startAt), e: en.endAt ? minutesFrom(dayStart, en.endAt) : nowMin, done: false, live: !en.endAt, taskId: en.taskId, course: false, loc: '' }))
 
-    // 拖动中的条目用临时位置显示
-    const shown = items.map((it) =>
-      drag && drag.op !== 'create' && drag.kind === kind && drag.id === it.id ? { ...it, s: drag.start, e: drag.end } : it
-    )
+    const itemDrag = drag && drag.op !== 'create' && drag.kind === kind && drag.moved ? drag : null
+    const drop = itemDrag ? itemDrop(itemDrag) : null
+    const source = itemDrag ? items.find((it) => it.id === itemDrag.id) : undefined
+    const copy = drop?.op === 'copy'
+    // 副本和原块一起参与重叠分道；移动只替换原块的预览位置。
+    const shown = items.map((it) => source === it && drop && !copy ? { ...it, s: drop.span.start, e: drop.span.end } : it)
+    const preview = source && drop?.valid && copy ? { ...source, s: drop.span.start, e: drop.span.end } : null
+    if (preview) shown.push(preview)
     const lanes = layoutLanes(shown.map((it) => ({ start: it.s, end: it.e })))
     const ghost =
       drag?.op === 'create' && drag.kind === kind
@@ -234,8 +274,12 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
 
     return (
       <div
-        className={`col col-${kind}`}
+        className={`col col-${kind}${copy ? ' is-copy-drag' : ''}`}
         onPointerDown={beginCreate(kind)}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={cancelPointer}
+        onLostPointerCapture={cancelPointer}
         onDragOver={kind === 'plan' ? (e) => e.preventDefault() : undefined}
         onDrop={kind === 'plan' ? onDropTask : undefined}
         aria-label={kind === 'plan' ? '计划列' : '实际列'}
@@ -249,10 +293,11 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
           const c = it.cat ? catById.get(it.cat) : undefined
           const { lane, lanes: n } = lanes[i]
           const short = (e - s) * PX_PER_MIN < 34
+          const isCopy = it === preview
           return (
             <div
-              key={it.id}
-              className={`block block-${kind} ${it.done ? 'is-done' : ''} ${it.live ? 'is-live' : ''} ${short ? 'is-short' : ''} ${it.course ? 'is-course' : ''}`}
+              key={isCopy ? `copy:${it.id}` : it.id}
+              className={`block block-${kind} ${it.done ? 'is-done' : ''} ${it.live ? 'is-live' : ''} ${short ? 'is-short' : ''} ${it.course ? 'is-course' : ''}${isCopy ? ' block-copy-preview' : ''}`}
               style={{
                 top: s * PX_PER_MIN,
                 height: Math.max(12, (e - s) * PX_PER_MIN),
@@ -260,10 +305,12 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
                 width: `calc(${100 / n}% - 4px)`,
                 ['--c' as string]: c?.color ?? 'var(--faint)'
               }}
-              onPointerDown={it.live ? undefined : beginItem(kind, it.id, s, e, 'move')}
+              onPointerDown={it.live || isCopy ? undefined : beginItem(kind, it.id, s, e, it.s, it.e, 'move')}
+              aria-hidden={isCopy || undefined}
               title={`${it.title}  ${hhmm(addMinutes(dayStart, s))}–${hhmm(addMinutes(dayStart, e))}`}
             >
               <div className="block-title">
+                {isCopy && <span className="block-copy-label">＋复制 </span>}
                 {it.done && '✓ '}
                 {it.title}
               </div>
@@ -273,7 +320,7 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
                   {it.loc && <span className="block-loc"> · {it.loc}</span>}
                 </div>
               )}
-              {kind === 'plan' && !short && !it.course && (
+              {kind === 'plan' && !short && !it.course && !isCopy && (
                 <button
                   className="block-start"
                   aria-label={`开始计时「${it.title}」`}
@@ -283,7 +330,7 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
                   ▶
                 </button>
               )}
-              {!it.live && <div className="resize" onPointerDown={beginItem(kind, it.id, s, e, 'resize')} aria-hidden />}
+              {!it.live && !isCopy && <div className="resize" onPointerDown={beginItem(kind, it.id, s, e, it.s, it.e, 'resize')} aria-hidden />}
             </div>
           )
         })}

@@ -1,23 +1,27 @@
 import { DatabaseSync } from 'node:sqlite'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { migrate } from './schema'
 import { Repo } from './repo'
 import { TimeRepo } from './timeRepo'
+import { CourseRepo } from './courseRepo'
 
 let repo: Repo
 let time: TimeRepo
 let clock: Date
+let db: DatabaseSync
 
 const at = (hhmm: string) => `2026-10-15T${hhmm}:00.000Z`
 const setNow = (hhmm: string) => (clock = new Date(at(hhmm)))
 
 beforeEach(() => {
-  const db = new DatabaseSync(':memory:')
+  db = new DatabaseSync(':memory:')
   migrate(db)
   repo = new Repo(db)
   setNow('12:00')
   time = new TimeRepo(db, () => clock)
 })
+
+afterEach(() => db.close())
 
 describe('plan blocks', () => {
   it('关联任务的计划跟随任务标题，收件箱任务排进计划后变成待办', () => {
@@ -51,6 +55,58 @@ describe('plan blocks', () => {
     const u = time.updateBlock(b.id, { startAt: at('10:00'), endAt: at('11:30') })
     expect(u.title).toBe('a')
     expect(u.endAt).toBe(at('11:30'))
+  })
+
+  it('允许和源块重叠；副本移动或删除后不改变源块', () => {
+    const categoryId = repo.listCategories()[0].id
+    const original = time.createBlock({ title: '自习', categoryId, startAt: at('08:00'), endAt: at('09:00') })
+    const copy = time.copyBlock(original.id, at('08:15'))
+    expect(copy.id).not.toBe(original.id)
+    expect(copy).toEqual({ ...original, id: copy.id, startAt: at('08:15'), endAt: at('09:15') })
+    expect(time.listBlocks(at('08:30'), at('08:45')).map((b) => b.id)).toEqual([original.id, copy.id])
+    time.updateBlock(copy.id, { startAt: at('10:00'), endAt: at('11:00') })
+    time.deleteBlock(copy.id)
+    expect(time.getBlock(original.id)).toEqual(original)
+  })
+
+  it('关联同一个任务，删除源块不删除副本、任务或已有实际记录', () => {
+    const task = repo.capture('检查进度')
+    const original = time.createBlock({ taskId: task.id, startAt: at('12:00'), endAt: at('13:00') })
+    const running = time.start({ taskId: task.id, planBlockId: original.id })
+    const copy = time.copyBlock(original.id, at('14:00'))
+    expect(copy).toMatchObject({ taskId: task.id, title: task.title, endAt: at('15:00') })
+    expect(time.running()?.planBlockId).toBe(original.id)
+    time.deleteBlock(original.id)
+    expect(time.getBlock(copy.id)).toEqual(copy)
+    expect(time.getEntry(running.id)?.planBlockId).toBeNull()
+    expect(repo.getTask(task.id)).not.toBeNull()
+  })
+
+  it('课程块保留课表地点，直接删除源块不会删除副本', () => {
+    new CourseRepo(db).commit({ termStart: '2026-10-12', notes: [], courses: [{
+      name: '物理', location: '教学楼 102', teacher: '',
+      meetings: [{ weekday: 4, start: '10:00', end: '11:30', weeks: [1], location: '' }]
+    }] }, false)
+    const [original] = time.listBlocks(new Date(2026, 9, 15).toISOString(), new Date(2026, 9, 16).toISOString())
+    const copy = time.copyBlock(original.id, at('13:00'))
+    expect(copy).toMatchObject({ courseId: original.courseId, location: '教学楼 102', endAt: at('14:30') })
+    time.deleteBlock(original.id)
+    expect(time.getBlock(copy.id)).toEqual(copy)
+  })
+
+  it('若已安装逐计划块地点迁移，也复制保存的地点列', () => {
+    db.exec("ALTER TABLE plan_blocks ADD COLUMN location TEXT NOT NULL DEFAULT ''")
+    const original = time.createBlock({ title: '自习', startAt: at('08:00'), endAt: at('09:00') })
+    db.prepare('UPDATE plan_blocks SET location = ? WHERE id = ?').run('阅览室', original.id)
+    const copy = time.copyBlock(original.id, at('10:00'))
+    expect(db.prepare('SELECT location FROM plan_blocks WHERE id = ?').get(copy.id)?.location).toBe('阅览室')
+  })
+
+  it('源块不存在或落点无效时拒绝复制', () => {
+    const original = time.createBlock({ title: 'a', startAt: at('08:00'), endAt: at('09:00') })
+    expect(() => time.copyBlock(original.id, 'bad')).toThrow('开始时间格式不对')
+    expect(() => time.copyBlock('missing', at('10:00'))).toThrow('计划不存在')
+    expect(time.listBlocks(at('07:00'), at('20:00'))).toEqual([original])
   })
 })
 

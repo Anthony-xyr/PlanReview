@@ -302,6 +302,9 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--accent); }
 .block:hover .block-start, .block-start:focus-visible { opacity: 1; }
 .resize { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; cursor: ns-resize; }
 .block.ghost { left: 2px; right: 2px; background: var(--accent-soft); border: 1px dashed var(--accent); color: var(--accent-text); cursor: crosshair; pointer-events: none; }
+.col.is-copy-drag, .col.is-copy-drag .block { cursor: copy; }
+.block.block-copy-preview { pointer-events: none; z-index: 3; outline: 1px dashed var(--accent); outline-offset: -1px; }
+.block-copy-label { color: var(--accent-text); }
 
 /* ---------- M3：计时条、提醒、收尾 ---------- */
 
