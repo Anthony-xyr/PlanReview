@@ -34,6 +34,7 @@ import { askWeekly, generateWeekly, weekContextText, type WeekContext } from './
 import { freeGaps, suggestPlan } from './ai/planner'
 import { desktopVisibility, floatIntentAfterReminder, floatIntentAfterTimerChange, floatMayCoverMacFullscreen, type FloatIntent } from './desktopWindows'
 import { MacWorkspaces } from './macWorkspaces'
+import { mainWindowChrome, updateMainWindowChrome } from './mainWindowChrome'
 import { TimerWindow } from './timerWindow'
 
 const FLOAT_WIDTH = 320
@@ -319,8 +320,8 @@ function registerIpc(): void {
     },
     'win:status': (): SystemStatus => ({
       hotkeyRegistered,
-      fullscreenDetection: isFullscreenAppActive() !== null,
-      platform: process.platform === 'win32' ? 'win32' : isMac ? 'darwin' : 'linux'
+      fullscreenDetection: isWindows && isFullscreenAppActive() !== null,
+      platform: isWindows ? 'win32' : isMac ? 'darwin' : 'linux'
     })
   }
   for (const [channel, fn] of Object.entries(handlers)) {
@@ -393,26 +394,13 @@ async function loadRenderer(win: BrowserWindow, hash = ''): Promise<void> {
   }
 }
 
-function getTitleBarOverlayOptions() {
-  const dark = nativeTheme.shouldUseDarkColors
-  return {
-    color: dark ? '#1f1f22' : '#fbfbfa',
-    symbolColor: dark ? '#ecebe8' : '#1f1e1b',
-    height: 34
-  }
-}
-
 function syncMainWindowTheme(): void {
   const win = mainWin
   if (!win || win.isDestroyed()) return
-  const appearance = getTitleBarOverlayOptions()
-  win.setBackgroundColor(appearance.color)
-  if (process.platform === 'win32') win.setTitleBarOverlay(appearance)
+  updateMainWindowChrome(win, nativeTheme.shouldUseDarkColors)
 }
 
 function createMainWindow(): void {
-  const isWindows = process.platform === 'win32'
-  const appearance = getTitleBarOverlayOptions()
   mainWin = new BrowserWindow({
     width: 1280,
     height: 820,
@@ -420,15 +408,9 @@ function createMainWindow(): void {
     minHeight: 520,
     title: '计划与复盘',
     icon: resource('icon.png'),
-    backgroundColor: appearance.color,
+    ...mainWindowChrome(nativeTheme.shouldUseDarkColors),
     autoHideMenuBar: true,
     show: false,
-    ...(isWindows
-      ? {
-          titleBarStyle: 'hidden' as const,
-          titleBarOverlay: appearance
-        }
-      : {}),
     webPreferences: webPreferences()
   })
   mainWin.once('ready-to-show', () => {
@@ -689,7 +671,7 @@ function tick(): void {
   const { running } = snapshot
   const reminder = center.evaluate(snapshot)
 
-  const full = settings.hideInFullscreen ? isFullscreenAppActive() === true : false
+  const full = isWindows && settings.hideInFullscreen && isFullscreenAppActive() === true
   if (full !== fullscreenNow) {
     fullscreenNow = full
     if (full && floatIntent === 'show') floatIntent = 'auto'

@@ -41,12 +41,17 @@ const entry: TimeEntry = {
   source: 'timer', note: '', taskId: null, planBlockId: null, categoryId: null, plannedMin: null, extendedMin: 0, overrunReason: null
 }
 
+const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
+
 afterEach(() => {
   vi.useRealTimers()
+  vi.clearAllMocks()
   vi.restoreAllMocks()
+  Object.defineProperty(process, 'platform', originalPlatform)
 })
 
 it('仅可见时轮询，推送靠近状态，隐藏或销毁时停止并解绑屏幕事件', async () => {
+  Object.defineProperty(process, 'platform', { ...originalPlatform, value: 'win32' })
   vi.useFakeTimers()
   const { screen } = await import('electron')
   const load = vi.fn(async (_win: Electron.BrowserWindow, _hash: string) => {})
@@ -87,5 +92,34 @@ it('仅可见时轮询，推送靠近状态，隐藏或销毁时停止并解绑�
   expect(screen.listenerCount('display-metrics-changed')).toBe(0)
   expect(screen.listenerCount('display-added')).toBe(0)
   expect(screen.listenerCount('display-removed')).toBe(0)
+  expect(vi.getTimerCount()).toBe(0)
+})
+
+it('creates a click-through timer on darwin using only Electron APIs and follows the Mac workspace setting', async () => {
+  Object.defineProperty(process, 'platform', { ...originalPlatform, value: 'darwin' })
+  vi.useFakeTimers()
+  const { screen } = await import('electron')
+  const load = vi.fn(async (_win: Electron.BrowserWindow, _hash: string) => {})
+  const controller = new TimerWindow(() => ({}), load, new MacWorkspaces(() => undefined))
+  controller.update(entry, true, true)
+  const [win, hash] = load.mock.calls[0]
+  expect(hash).toBe('#timer')
+  expect(win).toHaveProperty('options.frame', false)
+  expect(win).toHaveProperty('options.transparent', true)
+  expect(win).toHaveProperty('options.focusable', false)
+  expect(win).not.toHaveProperty('options.titleBarOverlay')
+  expect(win.setIgnoreMouseEvents).toHaveBeenCalledWith(true)
+  win.emit('ready-to-show')
+  expect(win.isVisible()).toBe(true)
+  expect(win.setVisibleOnAllWorkspaces).toHaveBeenLastCalledWith(true, { visibleOnFullScreen: false, skipTransformProcessType: true })
+  vi.mocked(screen.getCursorScreenPoint).mockReturnValueOnce({ x: 600, y: 12 })
+  await vi.advanceTimersByTimeAsync(50)
+  expect(win.webContents.send).toHaveBeenCalledWith('timer-hover', true)
+  controller.update(entry, true, false)
+  expect(win.setVisibleOnAllWorkspaces).toHaveBeenLastCalledWith(true, { visibleOnFullScreen: true, skipTransformProcessType: true })
+  controller.update(null, false, false)
+  expect(win.setVisibleOnAllWorkspaces).toHaveBeenLastCalledWith(true, { visibleOnFullScreen: false, skipTransformProcessType: true })
+  expect(win.isVisible()).toBe(false)
+  controller.dispose()
   expect(vi.getTimerCount()).toBe(0)
 })

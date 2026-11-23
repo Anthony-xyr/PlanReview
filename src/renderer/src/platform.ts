@@ -1,3 +1,3 @@
-/** 渲染进程判断当前系统：只用来调整文案和按键叫法，不参与业务逻辑 */
-export const isMacPlatform = navigator.platform.startsWith('Mac') || navigator.userAgent.includes('Macintosh')
-export const platformName = isMacPlatform ? 'darwin' : 'win32'
+/** 主窗和悬浮窗由预加载脚本提供系统信息。顶部计时窗只有计时 API。 */
+export const platformName = window.api?.win?.platform ?? ''
+export const isMacPlatform = platformName === 'darwin'

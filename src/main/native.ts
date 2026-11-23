@@ -3,8 +3,7 @@ import { createRequire } from 'node:module'
 // Windows 的「用户通知状态」：全屏游戏、全屏视频、演示模式时返回 2/3/4。
 // 用来在全屏时自动隐藏悬浮窗。失败时返回 null（视为无法检测）。
 //
-// macOS 不需要这个检测：全屏应用会占一个独立的桌面（Space），悬浮窗不设
-// visibleOnFullScreen 就不会跟过去，effect 上等价于「全屏时隐藏」。
+// macOS 用独立的全屏桌面（Space）和 visibleOnFullScreen 控制浮窗，不用 Windows 的全屏状态。
 // koffi 只在 Windows 上加载，其他平台缺这个原生模块也不影响启动。
 type QueryFn = (out: number[]) => number
 let query: QueryFn | null | undefined

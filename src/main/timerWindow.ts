@@ -138,6 +138,8 @@ export class TimerWindow {
 
   private pollCursor(): void {
     if (this.hoverInterval) return
+    // This is a cross-platform Electron API on Windows and macOS. It is not available on Wayland.
+    if (process.platform !== 'win32' && process.platform !== 'darwin') return
     const check = () => {
       if (this.win?.isVisible()) this.setHovered(cursorNearTimer(screen.getCursorScreenPoint(), this.win.getBounds(), this.hovered))
     }
