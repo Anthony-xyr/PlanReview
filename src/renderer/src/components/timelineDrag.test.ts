@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { advanceItemDrag, copyModifier, itemDrop, type ItemDrag } from './timelineDrag'
+import { advanceItemDrag, copyModifier, isPlanCopyTarget, itemDrop, PX_PER_MIN, timelineMinuteAt, type ItemDrag } from './timelineDrag'
 
 const drag: ItemDrag = {
   op: 'move', kind: 'plan', id: 'block', pointerId: 1,
@@ -39,5 +39,23 @@ describe('时间轴拖动复制', () => {
     expect(itemDrop(advanceItemDrag({ ...drag, kind: 'entry' }, 160, true, false)).op).toBe('move')
     expect(itemDrop(advanceItemDrag({ ...drag, op: 'resize' }, 160, true, true)).op).toBe('resize')
     expect(advanceItemDrag(drag, 67, true, true).moved).toBe(false)
+  })
+
+  it('允许在刻度附近及轻微跨分隔线，拒绝深入实际列或离开可见时间轴', () => {
+    const plan = { left: 156, right: 356, top: -10, bottom: 1574 }
+    const viewport = { left: 100, right: 556, top: 20, bottom: 650 }
+    for (const x of [plan.left - 15, plan.right + 12]) expect(isPlanCopyTarget({ x, y: 80 }, plan, viewport)).toBe(true)
+    for (const point of [{ x: 360, y: 10 }, { x: 384, y: 80 }, { x: 110, y: 80 }, { x: 200, y: 650 }]) {
+      expect(isPlanCopyTarget(point, plan, viewport)).toBe(false)
+    }
+    expect(advanceItemDrag(drag, drag.grab, true, false, 200).moved).toBe(true)
+  })
+
+  it('滚动后固定光标读到新的分钟，松手按新的吸附位置保留原时长', () => {
+    const y = 100
+    const top = y - drag.grab * PX_PER_MIN
+    const afterScroll = timelineMinuteAt(y, top - 46 * PX_PER_MIN)
+    expect(itemDrop(advanceItemDrag(drag, afterScroll, true, true)).span).toEqual({ start: 105, end: 165 })
+    expect(timelineMinuteAt(y, y + 5)).toBe(0)
   })
 })

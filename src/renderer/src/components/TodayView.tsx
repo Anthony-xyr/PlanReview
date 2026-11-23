@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Category, PlanBlock, Settings, StartTimerInput, Task, TimeEntry } from '@shared/types'
 import type { Mutate } from '../ui'
 import { formatMinutes } from '@shared/format'
@@ -17,7 +17,7 @@ import {
 } from '@shared/time'
 import { BlockDialog, type BlockDraft } from './BlockDialog'
 import { ResurfacePanel } from './Resurface'
-import { advanceItemDrag, copyModifier, DAY_MIN, itemDrop, PX_PER_MIN, type Drag } from './timelineDrag'
+import { advanceItemDrag, copyModifier, DAY_MIN, isPlanCopyTarget, itemDrop, PX_PER_MIN, timelineMinuteAt, type Drag, type DragPoint } from './timelineDrag'
 
 interface Props {
   settings: Settings
@@ -49,6 +49,8 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
   }, [version])
   const [now, setNow] = useState(() => new Date())
   const gridRef = useRef<HTMLDivElement>(null)
+  const planRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
   const scrolled = useRef(false)
 
   const { start: dayStart, end: dayEnd } = useMemo(() => dayRange(day, settings.dayStartHour), [day, settings.dayStartHour])
@@ -105,14 +107,12 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
 
   // ---------- 拖拽 ----------
 
-  const minuteAt = (clientY: number) => {
-    const rect = gridRef.current!.getBoundingClientRect()
-    return clamp((clientY - rect.top) / PX_PER_MIN, 0, DAY_MIN)
-  }
+  const minuteAt = (clientY: number) => timelineMinuteAt(clientY, gridRef.current!.getBoundingClientRect().top)
 
   // 拖拽状态同时存在 ref 里：pointerup 可能在界面重绘之前到达，必须读到最新值
   const dragRef = useRef<Drag | null>(null)
   const pointerOwner = useRef<Element | null>(null)
+  const lastPointer = useRef<(DragPoint & { startX: number }) | null>(null)
   const dragging = drag !== null
   const isMac = navigator.platform.startsWith('Mac')
 
@@ -121,13 +121,14 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
     dragRef.current = d
     setDrag(d)
     if (!d) {
+      lastPointer.current = null
       const owner = pointerOwner.current
       pointerOwner.current = null
       if (pointerId !== undefined && owner?.hasPointerCapture(pointerId)) owner.releasePointerCapture(pointerId)
     }
   }
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!dragging) return
     const onKey = (e: KeyboardEvent) => {
       const d = dragRef.current
@@ -141,39 +142,65 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
       }
     }
     const onBlur = () => updateDrag(null)
+    const onMove = (event: PointerEvent) => movePointer(event)
+    const onUp = (event: PointerEvent) => finishPointer(event)
     window.addEventListener('keydown', onKey)
     window.addEventListener('keyup', onKey)
     window.addEventListener('blur', onBlur)
+    // 刻度与实际列不是起始列的子节点。即使系统未及时转发 pointer capture，窗口也能收到落点。
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', cancelPointer)
     return () => {
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('keyup', onKey)
       window.removeEventListener('blur', onBlur)
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', cancelPointer)
     }
   }, [dragging, isMac])
 
-  const pointerDrag = (e: React.PointerEvent): Drag | null => {
-    const d = dragRef.current
-    if (!d || d.pointerId !== e.pointerId) return null
-    const m = minuteAt(e.clientY)
+  const dragAtPoint = (d: Drag, point: DragPoint & { startX: number }, copyHeld: boolean): Drag => {
+    const m = minuteAt(point.y)
     if (d.op === 'create') return { ...d, cur: m }
-    const hit = document.elementFromPoint(e.clientX, e.clientY)
-    const onPlan = d.kind === 'plan' && !!hit && e.currentTarget.contains(hit)
-    return advanceItemDrag(d, m, copyModifier(e, isMac), onPlan)
+    const plan = d.kind === 'plan' ? planRef.current?.getBoundingClientRect() : null
+    const scroll = scrollRef.current
+    const bounds = scroll?.getBoundingClientRect()
+    const onPlan = !!(plan && scroll && bounds && isPlanCopyTarget(point, plan, {
+      left: bounds.left, top: bounds.top, right: bounds.left + scroll.clientWidth, bottom: bounds.top + scroll.clientHeight
+    }))
+    return advanceItemDrag(d, m, copyHeld, onPlan, point.x - point.startX)
   }
 
-  const onPointerMove = (e: React.PointerEvent) => {
+  const pointerDrag = (e: PointerEvent): Drag | null => {
+    const d = dragRef.current
+    if (!d || d.pointerId !== e.pointerId || !lastPointer.current) return null
+    const point = { x: e.clientX, y: e.clientY, startX: lastPointer.current.startX }
+    lastPointer.current = point
+    return dragAtPoint(d, point, copyModifier(e, isMac))
+  }
+
+  const onTimelineScroll = () => {
+    const d = dragRef.current
+    const point = lastPointer.current
+    // 滚轮不会产生 pointermove，仍用上次光标位置和当前滚动后的网格重算。
+    if (d && point) updateDrag(dragAtPoint(d, point, d.op !== 'create' && d.copyHeld))
+  }
+
+  const movePointer = useEffectEvent((e: PointerEvent) => {
     const d = pointerDrag(e)
     if (d) updateDrag(d)
-  }
+  })
 
-  const onPointerUp = (e: React.PointerEvent) => {
+  const finishPointer = useEffectEvent((e: PointerEvent) => {
     const d = pointerDrag(e)
     if (!d) return
     updateDrag(null)
     commitDrag(d)
-  }
+  })
 
-  const cancelPointer = (e: React.PointerEvent) => {
+  const cancelPointer = (e: { pointerId: number }) => {
     if (dragRef.current?.pointerId === e.pointerId) updateDrag(null)
   }
 
@@ -219,6 +246,7 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
     if (kind === 'entry' && m > nowMin) return
     e.currentTarget.setPointerCapture(e.pointerId)
     pointerOwner.current = e.currentTarget
+    lastPointer.current = { x: e.clientX, y: e.clientY, startX: e.clientX }
     updateDrag({ op: 'create', kind, pointerId: e.pointerId, anchor: m, cur: m })
   }
 
@@ -227,6 +255,7 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
     e.stopPropagation()
     e.currentTarget.setPointerCapture(e.pointerId)
     pointerOwner.current = e.currentTarget
+    lastPointer.current = { x: e.clientX, y: e.clientY, startX: e.clientX }
     const grab = minuteAt(e.clientY)
     updateDrag({
       op, kind, id, pointerId: e.pointerId, origin: { start: s, end: en }, copyOrigin: { start: fullStart, end: fullEnd },
@@ -251,6 +280,10 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
   // ---------- 渲染 ----------
 
   const hours = Array.from({ length: 24 }, (_, i) => (settings.dayStartHour + i) % 24)
+  const copyDrag = drag?.op === 'move' && drag.kind === 'plan' && drag.moved && drag.copyHeld ? drag : null
+  const invalidCopy = copyDrag && !itemDrop(copyDrag).valid
+    ? !copyDrag.onPlan ? '移回计划列即可复制' : '请选择另一个可用时段'
+    : null
 
   const renderColumn = (kind: Kind) => {
     const items =
@@ -264,9 +297,11 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
     const copy = drop?.op === 'copy'
     // 副本和原块一起参与重叠分道；移动只替换原块的预览位置。
     const shown = items.map((it) => source === it && drop && !copy ? { ...it, s: drop.span.start, e: drop.span.end } : it)
-    const preview = source && drop?.valid && copy ? { ...source, s: drop.span.start, e: drop.span.end } : null
-    if (preview) shown.push(preview)
+    const preview = source && drop && copy ? { ...source, s: drop.span.start, e: drop.span.end } : null
+    const validPreview = !!(preview && drop?.valid)
+    if (validPreview && preview) shown.push(preview)
     const lanes = layoutLanes(shown.map((it) => ({ start: it.s, end: it.e })))
+    if (preview && !validPreview) shown.push(preview)
     const ghost =
       drag?.op === 'create' && drag.kind === kind
         ? [Math.min(drag.anchor, drag.cur), Math.max(drag.anchor, drag.cur)]
@@ -274,11 +309,9 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
 
     return (
       <div
-        className={`col col-${kind}${copy ? ' is-copy-drag' : ''}`}
+        ref={kind === 'plan' ? planRef : undefined}
+        className={`col col-${kind}${copy ? ' is-copy-drag' : ''}${copy && !validPreview ? ' is-invalid-copy' : ''}`}
         onPointerDown={beginCreate(kind)}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={cancelPointer}
         onLostPointerCapture={cancelPointer}
         onDragOver={kind === 'plan' ? (e) => e.preventDefault() : undefined}
         onDrop={kind === 'plan' ? onDropTask : undefined}
@@ -291,13 +324,14 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
           const s = clamp(it.s, 0, DAY_MIN)
           const e = clamp(it.e, 0, DAY_MIN)
           const c = it.cat ? catById.get(it.cat) : undefined
-          const { lane, lanes: n } = lanes[i]
+          const { lane, lanes: n } = lanes[i] ?? { lane: 0, lanes: 1 }
           const short = (e - s) * PX_PER_MIN < 34
           const isCopy = it === preview
+          const time = `${hhmm(addMinutes(dayStart, s))}–${it.live ? '进行中' : hhmm(addMinutes(dayStart, e))}`
           return (
             <div
               key={isCopy ? `copy:${it.id}` : it.id}
-              className={`block block-${kind} ${it.done ? 'is-done' : ''} ${it.live ? 'is-live' : ''} ${short ? 'is-short' : ''} ${it.course ? 'is-course' : ''}${isCopy ? ' block-copy-preview' : ''}`}
+              className={`block block-${kind} ${it.done ? 'is-done' : ''} ${it.live ? 'is-live' : ''} ${short ? 'is-short' : ''} ${it.course ? 'is-course' : ''}${isCopy ? ` block-copy-preview${validPreview ? '' : ' is-invalid'}${lane === n - 1 && n > 1 ? ' align-end' : ''}` : ''}`}
               style={{
                 top: s * PX_PER_MIN,
                 height: Math.max(12, (e - s) * PX_PER_MIN),
@@ -307,19 +341,19 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
               }}
               onPointerDown={it.live || isCopy ? undefined : beginItem(kind, it.id, s, e, it.s, it.e, 'move')}
               aria-hidden={isCopy || undefined}
-              title={`${it.title}  ${hhmm(addMinutes(dayStart, s))}–${hhmm(addMinutes(dayStart, e))}`}
+              title={`${it.title}  ${time}`}
             >
-              <div className="block-title">
-                {isCopy && <span className="block-copy-label">＋复制 </span>}
-                {it.done && '✓ '}
-                {it.title}
-              </div>
-              {!short && (
-                <div className="block-time">
-                  {hhmm(addMinutes(dayStart, s))}–{it.live ? '进行中' : hhmm(addMinutes(dayStart, e))} · {formatMinutes(Math.round(e - s))}
+              {isCopy ? <div className="block-copy-card">
+                <span className="block-copy-label">{validPreview ? '＋复制' : '无法复制'}</span>
+                <span className="block-copy-time">{time}</span>
+                <span className="block-copy-title">{it.title}</span>
+              </div> : <>
+                <div className="block-title">{it.done && '✓ '}{it.title}</div>
+                {!short && <div className="block-time">
+                  {time} · {formatMinutes(Math.round(e - s))}
                   {it.loc && <span className="block-loc"> · {it.loc}</span>}
-                </div>
-              )}
+                </div>}
+              </>}
               {kind === 'plan' && !short && !it.course && !isCopy && (
                 <button
                   className="block-start"
@@ -463,13 +497,13 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
           <div className="timeline-head">
             <div className="gutter" />
             <div className="col-head">
-              计划<span className="muted">在空白处拖动来安排</span>
+              计划<span className={invalidCopy ? 'hint-error copy-drop-hint' : 'muted'}>{invalidCopy || '在空白处拖动来安排'}</span>
             </div>
             <div className="col-head">
               实际<span className="muted">在空白处拖动来补录</span>
             </div>
           </div>
-          <div className="timeline-scroll">
+          <div className="timeline-scroll" ref={scrollRef} onScroll={onTimelineScroll}>
             <div className="grid" ref={gridRef} style={{ height: DAY_MIN * PX_PER_MIN }}>
               <div className="gutter">
                 {hours.map((h, i) => (

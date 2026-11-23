@@ -5,6 +5,19 @@ export const DAY_MIN = 1440
 
 type Kind = 'plan' | 'entry'
 type Span = { start: number; end: number }
+export type DragPoint = { x: number; y: number }
+type Rect = { left: number; top: number; right: number; bottom: number }
+
+export function timelineMinuteAt(clientY: number, gridTop: number): number {
+  return clamp((clientY - gridTop) / PX_PER_MIN, 0, DAY_MIN)
+}
+
+export function isPlanCopyTarget(point: DragPoint, plan: Rect, viewport: Rect): boolean {
+  // 刻度栏一侧多留一点余量，向右进入实际列较深才取消复制。
+  const toleranceRight = Math.min(24, (plan.right - plan.left) * 0.12)
+  return point.x >= Math.max(viewport.left, plan.left - 36) && point.x < Math.min(viewport.right, plan.right + toleranceRight) &&
+    point.y >= Math.max(viewport.top, plan.top) && point.y < Math.min(viewport.bottom, plan.bottom)
+}
 
 export interface ItemDrag {
   op: 'move' | 'resize'
@@ -27,8 +40,8 @@ export function copyModifier(e: { ctrlKey: boolean; altKey: boolean }, isMac: bo
   return isMac ? e.altKey : e.ctrlKey
 }
 
-export function advanceItemDrag(drag: ItemDrag, pointer: number, copyHeld: boolean, onPlan: boolean): ItemDrag {
-  const moved = drag.moved || Math.abs((pointer - drag.grab) * PX_PER_MIN) > 4
+export function advanceItemDrag(drag: ItemDrag, pointer: number, copyHeld: boolean, onPlan: boolean, horizontalDelta = 0): ItemDrag {
+  const moved = drag.moved || Math.abs((pointer - drag.grab) * PX_PER_MIN) > 4 || Math.abs(horizontalDelta) > 4
   return { ...drag, pointer, copyHeld, onPlan, moved }
 }
 
