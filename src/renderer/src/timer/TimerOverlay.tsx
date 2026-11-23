@@ -1,13 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { TimerOverlayState } from '@shared/types'
-import { formatElapsed } from '@shared/time'
-import { timerProgress } from './timerProgress'
+import { desktopElapsed, timerProgress } from './timerProgress'
 
 export function TimerOverlay() {
   const [state, setState] = useState<TimerOverlayState | null>(null)
   const [hovered, setHovered] = useState(false)
   const [now, setNow] = useState(() => Date.now())
-  const pill = useRef<HTMLDivElement>(null)
+  const frame = useRef<HTMLDivElement>(null)
   const running = !!state?.entry
 
   useEffect(() => {
@@ -54,7 +53,7 @@ export function TimerOverlay() {
   }, [running])
 
   useLayoutEffect(() => {
-    const el = pill.current
+    const el = frame.current
     if (!el) return
     let previous = 0
     const observer = new ResizeObserver(() => {
@@ -71,13 +70,20 @@ export function TimerOverlay() {
   const { title, startAt, targetEndAt } = state.entry
   const progress = timerProgress(targetEndAt, now)
   return (
-    <div ref={pill} role="timer" aria-label={`本次计时：${title}`} aria-live="off"
-      className={`desktop-timer${hovered ? ' is-near-cursor' : ''}${progress?.over ? ' is-over' : ''}`}
-      style={{ maxWidth: state.maxWidth }}>
-      <span className="desktop-timer-indicator" aria-hidden="true" />
-      <span className="desktop-timer-title">{title}</span>
-      <span className="desktop-timer-elapsed">{formatElapsed(now - Date.parse(startAt))}</span>
-      {progress && <span className="desktop-timer-left">{progress.label}</span>}
+    <div ref={frame} className="desktop-timer-frame" style={{ maxWidth: state.maxWidth }}>
+      <div role="timer" aria-label={`本次计时：${title}`} aria-live="off"
+        className={`desktop-timer${hovered ? ' is-near-cursor' : ''}${progress?.over ? ' is-over' : ''}`}>
+        <span className="desktop-timer-indicator" aria-hidden="true" />
+        <span className="desktop-timer-title">{title}</span>
+        <span className="desktop-timer-elapsed">
+          <span className="desktop-timer-reserve" aria-hidden="true">000:00:00</span>
+          <span>{desktopElapsed(now - Date.parse(startAt))}</span>
+        </span>
+        {progress && <span className="desktop-timer-left">
+          <span className="desktop-timer-reserve" aria-hidden="true">超时 0000 分钟</span>
+          <span className="desktop-timer-progress">{progress.label}</span>
+        </span>}
+      </div>
     </div>
   )
 }

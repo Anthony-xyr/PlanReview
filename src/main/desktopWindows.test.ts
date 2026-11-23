@@ -45,15 +45,17 @@ describe('计时条几何', () => {
   const area = { x: -1280, y: 40, width: 1280, height: 720 }
 
   it('宽度随文字变化，在负坐标屏幕和小工作区也居中', () => {
-    expect(timerBounds(area, 200)).toEqual({ x: -740, y: 48, width: 200, height: 34 })
-    expect(timerBounds(area, 541)).toEqual({ x: -910, y: 48, width: 540, height: 34 })
-    expect(timerBounds({ ...area, x: 300, width: 410 }, 540)).toEqual({ x: 308, y: 48, width: 394, height: 34 })
+    expect(timerBounds(area, 200)).toEqual({ x: -740, y: 48, width: 200, height: 38 })
+    expect(timerBounds(area, 541)).toEqual({ x: -910, y: 48, width: 540, height: 38 })
+    expect(timerBounds({ ...area, x: 300, width: 410 }, 540)).toEqual({ x: 308, y: 48, width: 394, height: 38 })
   })
 
-  it('只在计时条及其外部小范围内判定为靠近', () => {
+  it('入界触发，外侧缓冲带按上一次状态保持，离开后恢复', () => {
     const rect = timerBounds(area, 200)
-    expect(cursorNearTimer({ x: rect.x - 12, y: rect.y }, rect)).toBe(true)
-    expect(cursorNearTimer({ x: rect.x - 13, y: rect.y }, rect)).toBe(false)
-    expect(cursorNearTimer({ x: rect.x + 10, y: rect.y + rect.height + 12 }, rect)).toBe(false)
+    expect(cursorNearTimer({ x: rect.x - 16, y: rect.y }, rect, false)).toBe(true)
+    const buffer = { x: rect.x - 20, y: rect.y }
+    expect(cursorNearTimer(buffer, rect, false)).toBe(false)
+    expect(cursorNearTimer(buffer, rect, true)).toBe(true)
+    expect(cursorNearTimer({ x: rect.x + 10, y: rect.y + rect.height + 24 }, rect, true)).toBe(false)
   })
 })

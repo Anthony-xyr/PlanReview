@@ -1,5 +1,12 @@
 import { expect, it } from 'vitest'
-import { timerProgress } from './timerProgress'
+import { desktopElapsed, timerProgress } from './timerProgress'
+
+it('秒、分和小时换位保持同样的数字槽，负计时归零', () => {
+  expect([-1, 9_000, 10_000, 59_000, 60_000, 3_599_000, 3_600_000].map(desktopElapsed)).toEqual([
+    '00:00:00', '00:00:09', '00:00:10', '00:00:59', '00:01:00', '00:59:59', '01:00:00'
+  ])
+  expect(desktopElapsed(100 * 3_600_000)).toBe('100:00:00')
+})
 
 it('显示剩余、到点、超时；无目标时只显示已用时长', () => {
   const target = '2026-11-23T12:00:00.000Z'

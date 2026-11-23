@@ -1,6 +1,6 @@
 import { BrowserWindow, screen } from 'electron'
 import type { TimeEntry, TimerOverlayState } from '@shared/types'
-import { cursorNearTimer, TIMER_INITIAL_WIDTH, timerBounds, timerMaxWidth } from './desktopWindows'
+import { cursorNearTimer, TIMER_CURSOR_POLL_MS, TIMER_INITIAL_WIDTH, timerBounds, timerMaxWidth } from './desktopWindows'
 
 export class TimerWindow {
   private win: BrowserWindow | null = null
@@ -145,10 +145,10 @@ export class TimerWindow {
   private pollCursor(): void {
     if (this.hoverInterval) return
     const check = () => {
-      if (this.win?.isVisible()) this.setHovered(cursorNearTimer(screen.getCursorScreenPoint(), this.win.getBounds()))
+      if (this.win?.isVisible()) this.setHovered(cursorNearTimer(screen.getCursorScreenPoint(), this.win.getBounds(), this.hovered))
     }
     check()
-    this.hoverInterval = setInterval(check, 100)
+    this.hoverInterval = setInterval(check, TIMER_CURSOR_POLL_MS)
   }
 
   private stopPolling(): void {

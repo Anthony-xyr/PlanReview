@@ -26,8 +26,9 @@ export function desktopVisibility(
   }
 }
 
-export const TIMER_HEIGHT = 34
+export const TIMER_HEIGHT = 38
 export const TIMER_INITIAL_WIDTH = 240
+export const TIMER_CURSOR_POLL_MS = 50
 
 type Point = { x: number; y: number }
 type Rect = Point & { width: number; height: number }
@@ -41,8 +42,9 @@ export function timerBounds(area: Rect, requestedWidth: number): Rect {
   return { x: area.x + Math.round((area.width - width) / 2), y: area.y + 8, width, height: TIMER_HEIGHT }
 }
 
-export function cursorNearTimer(point: Point, rect: Rect): boolean {
-  const margin = 12
+export function cursorNearTimer(point: Point, rect: Rect, wasNear: boolean): boolean {
+  // 进入和离开用不同边距，光标沿边缘移动时不会反复淡入淡出。
+  const margin = wasNear ? 24 : 16
   return point.x >= rect.x - margin && point.x < rect.x + rect.width + margin &&
     point.y >= rect.y - margin && point.y < rect.y + rect.height + margin
 }

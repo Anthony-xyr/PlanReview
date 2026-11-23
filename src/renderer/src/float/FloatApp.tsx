@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent } from 'react'
 import type { Category, PlanBlock, Settings, StartTimerInput, Task, TimeEntry } from '@shared/types'
 import { dayOf, dayRange, formatElapsed, hhmm } from '@shared/time'
 import { remainingMin } from '@shared/session'
@@ -7,6 +7,7 @@ import { errorText } from '../ui'
 import { reminderActions, useReminder } from '../reminderActions'
 import { CaptureConfirm, useSmartCapture } from '../capture'
 import { matchesPickerQuery, planTimerInput, selectFloatWork } from './floatWork'
+import { closedPicker, pickerArrowIndex, pickerState } from './pickerState'
 
 interface FloatData {
   running: TimeEntry | null
@@ -29,15 +30,18 @@ export function FloatApp() {
   const [now, setNow] = useState(() => new Date())
   const [captureExpanded, setCaptureExpanded] = useState(false)
   const [captureFocus, setCaptureFocus] = useState(0)
-  const [pickerOpen, setPickerOpen] = useState(false)
-  const [query, setQuery] = useState('')
+  const [{ open: pickerOpen, query }, dispatchPicker] = useReducer(pickerState, closedPicker)
   const [starting, setStarting] = useState(false)
   const pickerId = useId()
   const reminder = useReminder()
   const rootRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const pickerToggle = useRef<HTMLButtonElement>(null)
+  const pickerPanel = useRef<HTMLDivElement>(null)
+  const pickerSearch = useRef<HTMLInputElement>(null)
   const loadId = useRef(0)
   const startPending = useRef(false)
+  const lastRunningId = useRef<string | null>(null)
 
   const load = useCallback(async () => {
     const id = ++loadId.current
@@ -62,13 +66,15 @@ export function FloatApp() {
   useEffect(() => {
     const offData = window.api.events.onDataChanged(() => { void load() })
     const offFocus = window.api.onFocusCapture(() => {
+      dispatchPicker({ type: 'reset' })
       setCaptureExpanded(true)
       setCaptureFocus((n) => n + 1)
     })
     void window.api.win.floatReady().catch((err: unknown) => console.error(err))
     const t = setInterval(() => setNow(new Date()), 1000)
     const onVisibility = () => {
-      if (!document.hidden) {
+      if (document.hidden) dispatchPicker({ type: 'reset' })
+      else {
         setNow(new Date())
         void load()
       }
@@ -93,6 +99,10 @@ export function FloatApp() {
   useLayoutEffect(() => {
     if (captureExpanded) inputRef.current?.focus()
   }, [captureExpanded, captureFocus])
+
+  useLayoutEffect(() => {
+    if (pickerOpen) pickerSearch.current?.focus()
+  }, [pickerOpen])
 
   // 窗口高度跟随内容
   useLayoutEffect(() => {
@@ -141,12 +151,17 @@ export function FloatApp() {
   }
 
   const { running, settings, categories } = data ?? { running: null, settings: null, categories: [] }
+  const runningId = running?.id ?? null
+  useEffect(() => {
+    if (runningId && lastRunningId.current !== runningId) dispatchPicker({ type: 'reset' })
+    lastRunningId.current = runningId
+  }, [runningId])
   const { current, upcoming, unscheduled } = useMemo(() => data && day === data.day
     ? selectFloatWork(data.tasks, data.blocks, data.startedPlanIds, now)
     : { current: null, upcoming: [], unscheduled: [] }, [data, day, now])
   const next = upcoming[0]
   const left = running ? remainingMin(running, now) : null
-  const categoryNames = new Map(categories.map((c) => [c.id, c.name]))
+  const categoryNames = useMemo(() => new Map(categories.map((c) => [c.id, c.name])), [categories])
   const tasksForPicker = unscheduled.filter((t) => matchesPickerQuery([t.title, ...t.tags, categoryNames.get(t.categoryId ?? '')], query))
   const plansForPicker = upcoming.filter((b) => matchesPickerQuery([b.title, b.location, categoryNames.get(b.categoryId ?? ''), hhmm(b.startAt)], query))
 
@@ -155,16 +170,37 @@ export function FloatApp() {
     startPending.current = true
     setStarting(true)
     try {
-      if (await run(() => window.api.entries.start(input))) {
-        setPickerOpen(false)
-        setQuery('')
-      }
+      await run(async () => {
+        const entry = await window.api.entries.start(input)
+        dispatchPicker({ type: 'reset' })
+        return entry
+      })
     } finally {
       startPending.current = false
       setStarting(false)
     }
   }
   const startPlan = (block: PlanBlock) => start(planTimerInput(block, new Date()))
+
+  const pickerKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (!pickerOpen || event.nativeEvent.isComposing || event.keyCode === 229) return
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      dispatchPicker({ type: 'escape' })
+      if (query) pickerSearch.current?.focus()
+      else pickerToggle.current?.focus()
+      return
+    }
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+    const results = Array.from(pickerPanel.current?.querySelectorAll<HTMLButtonElement>('.float-picker-item:not(:disabled)') ?? [])
+    const current = results.indexOf(event.target as HTMLButtonElement)
+    if (current === -1 && event.target !== pickerSearch.current) return
+    event.preventDefault()
+    const next = pickerArrowIndex(current, results.length, event.key === 'ArrowDown' ? 1 : -1)
+    if (next === -1) pickerSearch.current?.focus()
+    else results[next].focus()
+  }
 
   return (
     <div className="float" ref={rootRef}>
@@ -174,7 +210,10 @@ export function FloatApp() {
         <button className="float-btn" title="打开主窗口" aria-label="打开主窗口" onClick={() => window.api.win.openMain('today')}>
           ⤢
         </button>
-        <button className="float-btn" title="隐藏（托盘菜单可以再打开）" aria-label="隐藏悬浮窗" onClick={() => window.api.win.hideFloat()}>
+        <button className="float-btn" title="隐藏（托盘菜单可以再打开）" aria-label="隐藏悬浮窗" onClick={() => {
+          dispatchPicker({ type: 'reset' })
+          void window.api.win.hideFloat().catch((err: unknown) => setFlash({ text: errorText(err), error: true }))
+        }}>
           ×
         </button>
       </div>
@@ -247,13 +286,14 @@ export function FloatApp() {
         )}
 
         {!smart.pending && (
-          <div className="float-picker">
-            <button type="button" className="float-picker-toggle" aria-expanded={pickerOpen} aria-controls={pickerId}
-              onClick={() => setPickerOpen((open) => !open)}>
+          <div className="float-picker" onKeyDown={pickerKeyDown}>
+            <button ref={pickerToggle} type="button" className="float-picker-toggle" aria-expanded={pickerOpen} aria-controls={pickerId}
+              onClick={() => dispatchPicker({ type: pickerOpen ? 'reset' : 'open' })}>
               <span>{running ? '切换任务' : '选择任务开始'}</span><span aria-hidden>{pickerOpen ? '▾' : '▸'}</span>
             </button>
-            <div id={pickerId} role="region" aria-label="任务和计划" className="float-picker-panel" hidden={!pickerOpen}>
-              <input type="search" aria-label="筛选任务或计划" placeholder="筛选任务或计划" value={query} onChange={(e) => setQuery(e.target.value)} />
+            <div ref={pickerPanel} id={pickerId} role="region" aria-label="任务和计划" className="float-picker-panel" hidden={!pickerOpen}>
+              <input ref={pickerSearch} type="search" aria-label="筛选任务或计划" placeholder="筛选任务或计划" value={query}
+                onChange={(e) => dispatchPicker({ type: 'query', query: e.target.value })} />
               <div className="float-picker-list">
                 <h2>待安排</h2>
                 {tasksForPicker.length ? (
@@ -262,7 +302,11 @@ export function FloatApp() {
                       <button type="button" className="float-picker-item" disabled={starting || running?.taskId === t.id}
                         aria-label={`${running?.taskId === t.id ? '计时中' : running ? '切换到' : '开始'}「${t.title}」`}
                         onClick={() => void start({ taskId: t.id })}>
-                        <span title={t.title}>{t.title}</span><small>{running?.taskId === t.id ? '计时中' : categoryNames.get(t.categoryId ?? '')}</small>
+                        <span className="float-picker-title" title={t.title}>{t.title}</span>
+                        <span className="float-picker-meta">
+                          {running?.taskId === t.id && <small className="float-picker-category">计时中</small>}
+                          <PickerCategory name={categoryNames.get(t.categoryId ?? '')} />
+                        </span>
                       </button>
                     </li>
                   ))}</ul>
@@ -273,7 +317,11 @@ export function FloatApp() {
                     <li key={b.id}>
                       <button type="button" className="float-picker-item" disabled={starting} aria-label={`提前开始「${b.title}」，${hhmm(b.startAt)}`}
                         onClick={() => void startPlan(b)}>
-                        <span title={b.title}>{b.title}</span><small>{hhmm(b.startAt)}</small>
+                        <span className="float-picker-title" title={b.title}>{b.title}</span>
+                        <span className="float-picker-meta">
+                          <small className="float-picker-clock">{hhmm(b.startAt)}</small>
+                          <PickerCategory name={categoryNames.get(b.categoryId ?? '')} />
+                        </span>
                       </button>
                     </li>
                   ))}</ul>
@@ -326,4 +374,8 @@ export function FloatApp() {
       </div>
     </div>
   )
+}
+
+function PickerCategory({ name }: { name?: string }) {
+  return name ? <small className="float-picker-category" title={name}>{name}</small> : null
 }
