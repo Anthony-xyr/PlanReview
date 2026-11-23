@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cursorNearTimer, desktopVisibility, floatIntentAfterReminder, floatIntentAfterTimerChange, timerBounds } from './desktopWindows'
+import { cursorNearTimer, desktopVisibility, floatIntentAfterReminder, floatIntentAfterTimerChange, floatMayCoverMacFullscreen, timerBounds } from './desktopWindows'
 
 const settings = { floatingEnabled: true, hideInFullscreen: true }
 
@@ -25,6 +25,18 @@ describe('悬浮窗与顶部计时器', () => {
     expect(desktopVisibility(settings, true, true, 'auto', { kind: 'sleep', strong: true })).toEqual({ float: true, timer: false })
     expect(desktopVisibility(settings, true, true, 'show', null)).toEqual({ float: true, timer: false })
     expect(desktopVisibility({ ...settings, hideInFullscreen: false }, true, true, 'auto', null).timer).toBe(true)
+  })
+
+  it('Mac 全屏只为强提醒和主动唤出开例外，结束或隐藏后恢复', () => {
+    expect(floatMayCoverMacFullscreen(true, true, 'auto', null)).toBe(false)
+    expect(floatMayCoverMacFullscreen(true, true, 'auto', { strong: false })).toBe(false)
+    expect(floatMayCoverMacFullscreen(true, true, 'auto', { strong: true })).toBe(true)
+    expect(floatMayCoverMacFullscreen(true, true, 'auto', null)).toBe(false)
+    expect(floatMayCoverMacFullscreen(true, true, 'show', null)).toBe(true)
+    expect(floatMayCoverMacFullscreen(true, true, floatIntentAfterTimerChange('show', 'active', null), null)).toBe(false)
+    expect(floatMayCoverMacFullscreen(false, true, 'hide', { strong: true })).toBe(false)
+    expect(floatMayCoverMacFullscreen(true, false, 'auto', null)).toBe(true)
+    expect(floatMayCoverMacFullscreen(false, false, 'hide', null)).toBe(false)
   })
 
   it('关闭常驻悬浮窗不影响顶部，也不禁止主动唤出', () => {

@@ -10,6 +10,12 @@ export function floatIntentAfterReminder(intent: FloatIntent, reminder: Pick<Rem
   return intent === 'hide' && reminder?.fresh && (reminder.strong || reminder.kind === 'session-end') ? 'auto' : intent
 }
 
+export function floatMayCoverMacFullscreen(
+  visible: boolean, hideInFullscreen: boolean, intent: FloatIntent, reminder: Pick<Reminder, 'strong'> | null
+): boolean {
+  return visible && (!hideInFullscreen || intent === 'show' || reminder?.strong === true)
+}
+
 export function desktopVisibility(
   settings: Pick<Settings, 'floatingEnabled' | 'hideInFullscreen'>,
   running: boolean,

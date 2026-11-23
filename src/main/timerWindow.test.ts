@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { TimeEntry } from '@shared/types'
 import { TimerWindow } from './timerWindow'
+import { MacWorkspaces } from './macWorkspaces'
 
 vi.mock('electron', () => {
   const screen = Object.assign(new EventEmitter(), {
@@ -49,7 +50,7 @@ it('仅可见时轮询，推送靠近状态，隐藏或销毁时停止并解绑�
   vi.useFakeTimers()
   const { screen } = await import('electron')
   const load = vi.fn(async (_win: Electron.BrowserWindow, _hash: string) => {})
-  const controller = new TimerWindow(() => ({}), load)
+  const controller = new TimerWindow(() => ({}), load, new MacWorkspaces(() => undefined))
   controller.update(entry, true, true)
   const [win, hash] = load.mock.calls[0]
   expect(hash).toBe('#timer')

@@ -199,7 +199,7 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
             )}
           </label>
           {isMacPlatform && (
-            <small className="muted">全屏应用会占一个独立桌面，悬浮窗默认不会跟过去；关掉这项后才会显示在全屏内容上面。</small>
+            <small className="muted">标准全屏时隐藏；睡眠强提醒和手动打开的悬浮窗除外。</small>
           )}
           <label className="field">
             <span>速记快捷键</span>

@@ -32,7 +32,8 @@ import { parseSchedule } from './ai/schedule'
 import { WeeklyRepo } from './db/weeklyRepo'
 import { askWeekly, generateWeekly, weekContextText, type WeekContext } from './ai/weekly'
 import { freeGaps, suggestPlan } from './ai/planner'
-import { desktopVisibility, floatIntentAfterReminder, floatIntentAfterTimerChange, type FloatIntent } from './desktopWindows'
+import { desktopVisibility, floatIntentAfterReminder, floatIntentAfterTimerChange, floatMayCoverMacFullscreen, type FloatIntent } from './desktopWindows'
+import { MacWorkspaces } from './macWorkspaces'
 import { TimerWindow } from './timerWindow'
 
 const FLOAT_WIDTH = 320
@@ -58,7 +59,6 @@ let floatIntent: FloatIntent = 'auto'
 let floatReady = false
 let floatBridgeReady = false
 let focusCaptureWhenReady = false
-let floatOverMacFullscreen: boolean | undefined
 let lastRunningId: string | null = null
 let fullscreenNow = false
 let lastReminderSig: string | null = null
@@ -352,9 +352,11 @@ const webPreferences = (): Electron.WebPreferences => ({
   sandbox: true
 })
 
+const macWorkspaces = new MacWorkspaces(() => app.dock)
 const timerWindow = new TimerWindow(
   () => ({ ...webPreferences(), additionalArguments: ['--planreview-timer'] }),
-  loadRenderer
+  loadRenderer,
+  macWorkspaces
 )
 
 async function waitForDevServer(url: string, maxRetries = 30): Promise<boolean> {
@@ -483,7 +485,7 @@ function createFloatWindow(): void {
     floatWin = null
     floatReady = false
     floatBridgeReady = false
-    floatOverMacFullscreen = undefined
+    macWorkspaces.forget(win)
   })
   win.once('ready-to-show', () => {
     floatReady = true
@@ -505,20 +507,15 @@ function updateDesktopVisibility(s = time.getSettings(), running = time.running(
   const visible = desktopVisibility(s, running !== null, fullscreenNow, floatIntent, reminder)
   timerWindow.update(running, visible.timer, s.hideInFullscreen)
 
+  if (floatWin && floatReady) {
+    macWorkspaces.update(floatWin, floatMayCoverMacFullscreen(visible.float, s.hideInFullscreen, floatIntent, reminder))
+  }
   if (!visible.float) {
     if (!s.floatingEnabled) floatWin?.destroy()
     else floatWin?.hide()
   } else if (!floatWin) {
     createFloatWindow()
   } else if (floatReady) {
-    if (process.platform === 'darwin') {
-      const allowOnFullscreen = !s.hideInFullscreen || floatIntent === 'show' || reminder?.strong === true
-      if (allowOnFullscreen !== floatOverMacFullscreen) {
-        floatOverMacFullscreen = allowOnFullscreen
-        floatWin.setAlwaysOnTop(true, allowOnFullscreen ? 'screen-saver' : 'floating')
-        floatWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: allowOnFullscreen, skipTransformProcessType: true })
-      }
-    }
     if (!floatWin.isVisible()) floatWin.showInactive()
     focusCapture()
   }
@@ -630,10 +627,13 @@ function updateTray(): void {
     Menu.buildFromTemplate([
       { label: '打开主窗口', click: showMain },
       { label: `速记（${hotkeyLabel(s.hotkey, process.platform)}）`, click: toggleCapture },
-      {
-        label: floatShown ? '隐藏悬浮窗' : '显示悬浮窗',
-        click: () => (floatShown ? concealFloat() : revealFloat())
-      },
+      ...(isMac
+        ? [
+            // 在另一个 Space 的窗口也可能被 Electron 视作可见，始终保留主动唤出的入口。
+            { label: '显示悬浮窗', click: () => revealFloat() },
+            ...(floatShown ? [{ label: '隐藏悬浮窗', click: concealFloat }] : [])
+          ]
+        : [{ label: floatShown ? '隐藏悬浮窗' : '显示悬浮窗', click: () => (floatShown ? concealFloat() : revealFloat()) }]),
       { type: 'separator' },
       ...(running ? [{ label: `结束本次：${running.title}`, click: () => sendCommand('stop') }] : []),
       { label: '收尾', click: () => sendCommand('wrap-up') },

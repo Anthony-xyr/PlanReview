@@ -1,6 +1,7 @@
 import { BrowserWindow, screen } from 'electron'
 import type { TimeEntry, TimerOverlayState } from '@shared/types'
 import { cursorNearTimer, TIMER_CURSOR_POLL_MS, TIMER_INITIAL_WIDTH, timerBounds, timerMaxWidth } from './desktopWindows'
+import type { MacWorkspaces } from './macWorkspaces'
 
 export class TimerWindow {
   private win: BrowserWindow | null = null
@@ -14,7 +15,8 @@ export class TimerWindow {
 
   constructor(
     private preferences: () => Electron.WebPreferences,
-    private load: (win: BrowserWindow, hash: string) => Promise<void>
+    private load: (win: BrowserWindow, hash: string) => Promise<void>,
+    private workspaces: MacWorkspaces
   ) {}
 
   owns(sender: Electron.WebContents): boolean {
@@ -33,12 +35,10 @@ export class TimerWindow {
     const entry = running ? { id: running.id, title: running.title, startAt: running.startAt, targetEndAt: running.targetEndAt } : null
     const changed = entry?.id !== this.entry?.id || entry?.title !== this.entry?.title ||
       entry?.startAt !== this.entry?.startAt || entry?.targetEndAt !== this.entry?.targetEndAt
-    const fullscreenPolicyChanged = hideInFullscreen !== this.hideInFullscreen
     this.entry = entry
     this.visible = visible && entry !== null
     this.hideInFullscreen = hideInFullscreen
     if (!this.win && this.visible) this.create()
-    else if (fullscreenPolicyChanged && this.win) this.applyFullscreenPolicy(this.win)
     if (changed) this.sendState()
     this.syncVisibility()
   }
@@ -76,7 +76,7 @@ export class TimerWindow {
     this.win = win
     win.webContents.on('will-navigate', (event) => event.preventDefault())
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-    this.applyFullscreenPolicy(win)
+    win.setAlwaysOnTop(true, 'floating')
     win.setIgnoreMouseEvents(true)
     screen.on('display-metrics-changed', this.displayChanged)
     screen.on('display-added', this.displayChanged)
@@ -91,6 +91,7 @@ export class TimerWindow {
     win.webContents.once('render-process-gone', () => win.destroy())
     win.once('closed', () => {
       this.stopPolling()
+      this.workspaces.forget(win)
       this.win = null
       this.ready = false
       screen.removeListener('display-metrics-changed', this.displayChanged)
@@ -104,16 +105,9 @@ export class TimerWindow {
     })
   }
 
-  private applyFullscreenPolicy(win: BrowserWindow): void {
-    const aboveMacFullscreen = process.platform === 'darwin' && !this.hideInFullscreen
-    win.setAlwaysOnTop(true, aboveMacFullscreen ? 'screen-saver' : 'floating')
-    if (process.platform === 'darwin') {
-      win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: aboveMacFullscreen, skipTransformProcessType: true })
-    }
-  }
-
   private syncVisibility(): void {
     if (!this.win || !this.ready) return
+    this.workspaces.update(this.win, this.visible && !this.hideInFullscreen)
     if (this.visible && !this.win.isVisible()) this.win.showInactive()
     else if (!this.visible && this.win.isVisible()) this.win.hide()
   }
