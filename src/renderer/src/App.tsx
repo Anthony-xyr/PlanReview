@@ -3,6 +3,7 @@ import type { Category, Settings, StartTimerInput, Task, TimeEntry } from '@shar
 import { TasksView, type TaskViewKind } from './components/TasksView'
 import { TodayView } from './components/TodayView'
 import { SettingsDialog } from './components/SettingsDialog'
+import { SoftwareUpdateBanner, useSoftwareUpdate } from './components/SoftwareUpdate'
 import { ImportDialog } from './components/ImportDialog'
 import { DailyReviewDialog } from './components/DailyReviewDialog'
 import { WeeklyView } from './components/WeeklyView'
@@ -32,6 +33,7 @@ export function App() {
   const [extending, setExtending] = useState(false)
   const [wrapUp, setWrapUp] = useState(false)
   const reminder = useReminder()
+  const softwareUpdate = useSoftwareUpdate()
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null)
   const [importing, setImporting] = useState(false)
   const [reviewDay, setReviewDay] = useState<string | null>(null)
@@ -167,6 +169,7 @@ export function App() {
       </nav>
 
       <div className="content">
+        <SoftwareUpdateBanner state={softwareUpdate.state} />
         {running && <TimerBar running={running} onStop={() => setStopping(true)} onExtend={() => setExtending(true)} />}
         {reminder && (
           <div className="reminder-host">
@@ -295,6 +298,8 @@ export function App() {
       {showSettings && (
         <SettingsDialog
           settings={settings}
+          updateState={softwareUpdate.state}
+          updateReadError={softwareUpdate.readError}
           onClose={() => setShowSettings(false)}
           onSave={async (patch) => {
             const ok = await mutate(() => window.api.settings.update(patch))

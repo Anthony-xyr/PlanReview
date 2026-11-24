@@ -5,14 +5,18 @@ import { toAccelerator } from '@shared/accelerator'
 import { Dialog } from '../ui'
 import { isMacPlatform, platformName } from '../platform'
 import { AiSettings } from './AiSettings'
+import { SoftwareUpdateSettings } from './SoftwareUpdate'
+import type { UpdateState } from '@shared/update'
 
 interface Props {
   settings: Settings
+  updateState: UpdateState | null
+  updateReadError: string | null
   onSave: (patch: Partial<Settings>) => void
   onClose: () => void
 }
 
-export function SettingsDialog({ settings, onSave, onClose }: Props) {
+export function SettingsDialog({ settings, updateState, updateReadError, onSave, onClose }: Props) {
   const [form, setForm] = useState(settings)
   const [status, setStatus] = useState<SystemStatus | null>(null)
   const [recording, setRecording] = useState(false)
@@ -25,6 +29,7 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
 
   return (
     <Dialog title="设置" onClose={onClose}>
+      <SoftwareUpdateSettings state={updateState} readError={updateReadError} />
       <form
         className="settings"
         onSubmit={(e) => {

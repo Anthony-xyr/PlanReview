@@ -766,3 +766,18 @@ button.link.cat-del:hover { color: var(--danger); }
 /* AI 设置里的推理强度 */
 .settings-sub { font-size: 13px; margin: 18px 0 2px; }
 .effort-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; margin-top: 8px; }
+
+/* 软件更新：只显示在主窗口，随应用主题变化。 */
+.software-update-settings { display: grid; gap: 8px; padding: 10px 12px; margin: 0 0 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
+.software-update-settings h3 { font-size: 14px; margin: 0; }
+.update-version, .update-progress { font-variant-numeric: tabular-nums; }
+.update-status, .update-notes p { margin: 0; overflow-wrap: anywhere; }
+.update-actions, .update-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.update-progress progress { accent-color: var(--accent); width: min(18rem, 80%); }
+.update-notes { font-size: 13px; }
+.update-notes summary { color: var(--accent-text); cursor: pointer; width: fit-content; }
+.update-notes p { white-space: pre-wrap; max-height: 8em; overflow: auto; margin: 6px 0; }
+.update-banner { display: grid; gap: 6px; flex: none; margin: 10px 14px 4px; padding: 8px 12px; border-radius: 9px; border: 1px solid var(--line); background: var(--accent-soft); }
+.update-banner-main { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.update-banner-main small { display: block; }
+.update-banner .update-dismiss { padding-inline: 8px; font-size: 16px; }
