@@ -70,5 +70,12 @@ mac:
 dmg:
   artifactName: PlanReview-${version}-${arch}.${ext}
 
+# 只生成更新配置与清单；npm 打包命令用 --publish never，发布由工作流负责。
+publish:
+  provider: github
+  owner: Anthony-xyr
+  repo: PlanReview
+  releaseType: release
+
 # 没有代码签名证书，跳过签名（Windows 上仍会生成未签名的安装包）
 forceCodeSigning: false

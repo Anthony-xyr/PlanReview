@@ -35,11 +35,17 @@ jobs:
     - name: Package application
       run: npm run dist:win
 
+    - name: Verify update files
+      run: node scripts/verify-update-assets.mjs
+
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: PlanReview-Windows
-        path: dist/*.exe
+        path: |
+          dist/*.exe
+          dist/latest.yml
+          dist/*.blockmap
         if-no-files-found: error
         retention-days: 30
 
@@ -78,7 +84,10 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: PlanReview-macOS-${{ matrix.runner }}
-        path: dist/*.dmg
+        path: |
+          dist/*.dmg
+          dist/latest-mac.yml
+          dist/*.blockmap
         if-no-files-found: error
         retention-days: 30
 
@@ -94,6 +103,15 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: 'npm'
+
+    - name: Install release verification dependencies
+      run: npm ci --ignore-scripts
+
     - name: Download required Windows installer
       uses: actions/download-artifact@v4
       with:
@@ -101,14 +119,14 @@ jobs:
         path: dist
 
     - name: Download any available Mac installers
+      continue-on-error: true
       uses: actions/download-artifact@v4
       with:
-        path: dist
+        path: dist/macos-artifacts
         pattern: PlanReview-macOS-*
-        merge-multiple: true
 
-    - name: Verify the Windows installer exists
-      run: compgen -G 'dist/*.exe'
+    - name: Verify Windows update files and collect any Mac artifacts
+      run: node scripts/verify-update-assets.mjs --prepare-release
 
     - name: Create Release
       uses: softprops/action-gh-release@v2
@@ -117,6 +135,9 @@ jobs:
         files: |
           dist/*.exe
           dist/*.dmg
+          dist/latest.yml
+          dist/latest-mac.yml
+          dist/*.blockmap
         # 说明写在 docs/releases/<tag>.md（UTF-8，中英双语）
         name: ${{ github.ref_name }}
         body_path: docs/releases/${{ github.ref_name }}.md
