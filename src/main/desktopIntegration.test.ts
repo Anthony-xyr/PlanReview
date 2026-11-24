@@ -58,7 +58,7 @@ vi.mock('electron', async () => {
   }
   const dock = { setIcon: vi.fn(), isVisible: () => false, hide: vi.fn(), show: vi.fn(async () => {}) }
   return {
-    BrowserWindow: Window, Tray: TestTray,
+    BrowserWindow: Window, Tray: TestTray, powerMonitor: new EventEmitter(),
     app: Object.assign(new EventEmitter(), {
       isPackaged: false, dock, setPath: vi.fn(), getPath: (name: string) => name === 'appData' ? state.root : join(state.root, 'plan-review'),
       getAppPath: () => process.cwd(), getVersion: () => '0.3.0', getName: () => '隔离单元测试',
@@ -242,4 +242,5 @@ describe('真实主进程的悬浮窗与覆盖层协作（Electron 边界替身�
     expect(ordinary.webContents.send).toHaveBeenCalledWith('focus-capture')
     expect(ordinary.setIgnoreMouseEvents).not.toHaveBeenCalledWith(true)
   })
+
 })

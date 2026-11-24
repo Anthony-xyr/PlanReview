@@ -1,4 +1,5 @@
 import './styles.css'
+import './background.css'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App'

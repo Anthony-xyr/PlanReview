@@ -34,7 +34,8 @@ const api = {
   },
   events: {
     onDataChanged: (cb: () => void) => on(IPC_EVENTS.dataChanged, cb),
-    onCommand: (cb: (cmd: MainCommand) => void) => on(IPC_EVENTS.command, cb)
+    onCommand: (cb: (cmd: MainCommand) => void) => on(IPC_EVENTS.command, cb),
+    onResume: (cb: () => void) => on(IPC_EVENTS.resume, cb)
   },
   win: {
     ...bridge.win,

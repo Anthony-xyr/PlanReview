@@ -51,6 +51,7 @@ export const IPC_MANIFEST = {
   },
   settings: {
     get: 'read',
+    getBackgroundImage: 'read',
     update: 'write'
   },
   ai: {
@@ -123,6 +124,7 @@ export type IpcChannel = { [N in IpcNamespace]: `${N}:${IpcMethod<N>}` }[IpcName
 export const IPC_EVENTS = {
   dataChanged: 'data-changed',
   command: 'command',
+  resume: 'system-resume',
   reminder: 'reminder',
   focusCapture: 'focus-capture',
   timerState: 'timer-state',

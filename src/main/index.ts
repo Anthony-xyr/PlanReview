@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { app, ipcMain, nativeTheme, safeStorage } from 'electron'
+import { app, ipcMain, nativeTheme, powerMonitor, safeStorage } from 'electron'
+import { IPC_EVENTS } from '@shared/ipc'
 import { migrate } from './db/schema'
 import { Repo } from './db/repo'
 import { TimeRepo } from './db/timeRepo'
@@ -17,6 +18,8 @@ import { UpdateRuntime } from './update/runtime'
 import { DesktopWindows, resourcePath } from './desktop/windows'
 import { createAppMenu, DesktopTray, showReminderNotification } from './desktop/tray'
 import { SystemSettingsApplier } from './desktop/settingsApplier'
+
+const onResume = () => windows.mainContents()?.send(IPC_EVENTS.resume)
 
 const TICK_MS = 15_000
 const isMac = process.platform === 'darwin'
@@ -156,9 +159,9 @@ if (!app.requestSingleInstanceLock()) {
           tick()
         }
       },
-      updateSettings: (patch) => {
+      updateSettings: (patch, backgroundImage) => {
         const previousFloatingEnabled = time.getSettings().floatingEnabled
-        const s = time.updateSettings(patch)
+        const s = time.updateSettings(patch, backgroundImage)
         if (s.floatingEnabled !== previousFloatingEnabled) windows.resetFloatIntent()
         systemSettings.apply(s)
         return s
@@ -182,6 +185,7 @@ if (!app.requestSingleInstanceLock()) {
       readyUpdateVersion: updates.readyVersion()
     })
     windows.watchTheme()
+    powerMonitor.on('resume', onResume)
     systemSettings.apply(settings)
     tick()
     tickInterval = setInterval(tick, TICK_MS)
@@ -202,6 +206,7 @@ if (!app.requestSingleInstanceLock()) {
     updates?.saveBeforeExit()
   })
   app.on('will-quit', () => {
+    powerMonitor.removeListener('resume', onResume)
     updates?.dispose()
     clearInterval(tickInterval)
     windows.dispose()

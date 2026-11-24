@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react'
 import type { Settings, SystemStatus } from '@shared/types'
 import { hotkeyLabel } from '@shared/format'
 import { toAccelerator } from '@shared/accelerator'
-import { Dialog } from '../ui'
+import { Dialog, errorText } from '../ui'
 import { isMacPlatform, platformName } from '../platform'
 import { AiSettings } from './AiSettings'
+import { BackgroundSettings } from './BackgroundSettings'
 import { SoftwareUpdateSettings } from './SoftwareUpdate'
 import type { UpdateState } from '@shared/update'
 import './SettingsDialog.css'
@@ -14,29 +15,66 @@ interface Props {
   updateState: UpdateState | null
   updateReadError: string | null
   onUpdateRestart: (trigger: HTMLButtonElement) => Promise<void>
-  onSave: (patch: Partial<Settings>) => void
+  backgroundImage?: string | null
+  onThemeChange: (theme: Settings['theme']) => Promise<void>
+  onSave: (patch: Partial<Settings>, image?: string | null) => Promise<void>
   onClose: () => void
 }
 
-export function SettingsDialog({ settings, updateState, updateReadError, onUpdateRestart, onSave, onClose }: Props) {
-  const [form, setForm] = useState(settings)
+export function SettingsDialog({ settings, backgroundImage, onThemeChange, updateState, updateReadError, onUpdateRestart, onSave, onClose }: Props) {
+  const [form, setForm] = useState(() => {
+    // 配色独立即时保存，不随其他设置的草稿提交。
+    const { theme: _theme, ...draft } = settings
+    return draft
+  })
+  // undefined 代表保留已保存的图片，null 代表移除。
+  const [draftImage, setDraftImage] = useState<string | null>()
+  const [picking, setPicking] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [changingTheme, setChangingTheme] = useState(false)
+  const [saveError, setSaveError] = useState('')
+  const image = draftImage === undefined ? backgroundImage : draftImage
+  const saveDisabled = saving || changingTheme || picking || (form.backgroundMode === 'custom' && !image)
+  const close = () => { if (!saving) onClose() }
   const [status, setStatus] = useState<SystemStatus | null>(null)
   const [recording, setRecording] = useState(false)
-  const set = <K extends keyof Settings>(k: K, v: Settings[K]) => setForm((f) => ({ ...f, [k]: v }))
-  const num = (k: keyof Settings) => (e: React.ChangeEvent<HTMLInputElement>) => set(k, Number(e.target.value) as never)
+  const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) => setForm((f) => ({ ...f, [k]: v }))
+  const num = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => set(k, Number(e.target.value) as never)
 
   useEffect(() => {
     window.api.win.status().then(setStatus)
   }, [settings])
 
+  const changeTheme = async (theme: Settings['theme']) => {
+    if (theme === settings.theme) return
+    setChangingTheme(true)
+    setSaveError('')
+    try {
+      await onThemeChange(theme)
+    } catch (err) {
+      setSaveError(errorText(err))
+    } finally {
+      setChangingTheme(false)
+    }
+  }
+
   return (
-    <Dialog title="设置" onClose={onClose}>
+    <Dialog title="设置" onClose={close}>
       <SoftwareUpdateSettings state={updateState} readError={updateReadError} onRestart={onUpdateRestart} />
       <form
         className="settings"
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault()
-          onSave(form)
+          if (saveDisabled) return
+          setSaving(true)
+          setSaveError('')
+          try {
+            await onSave(form, draftImage)
+          } catch (err) {
+            setSaveError(errorText(err))
+          } finally {
+            setSaving(false)
+          }
         }}
       >
         <section>
@@ -178,18 +216,28 @@ export function SettingsDialog({ settings, updateState, updateReadError, onUpdat
                 type="button"
                 key={v}
                 role="radio"
-                aria-checked={form.theme === v}
-                className={form.theme === v ? 'on' : ''}
-                onClick={() => {
-                  set('theme', v)
-                  // 不等「保存」，点了就换，方便对比
-                  window.api.settings.update({ theme: v })
-                }}
+                aria-checked={settings.theme === v}
+                className={settings.theme === v ? 'on' : ''}
+                disabled={saving || changingTheme}
+                onClick={() => void changeTheme(v)}
               >
                 {label}
               </button>
             ))}
           </div>
+          <BackgroundSettings
+            mode={form.backgroundMode}
+            fit={form.backgroundFit}
+            opacity={form.backgroundOpacity}
+            image={image}
+            picking={picking}
+            disabled={saving}
+            onModeChange={(v) => set('backgroundMode', v)}
+            onFitChange={(v) => set('backgroundFit', v)}
+            onOpacityChange={(v) => set('backgroundOpacity', v)}
+            onImageChange={setDraftImage}
+            onPicking={setPicking}
+          />
         </section>
 
         <section>
@@ -245,11 +293,12 @@ export function SettingsDialog({ settings, updateState, updateReadError, onUpdat
           </label>
         </section>
 
+        {saveError && <p className="hint-error" role="alert">{saveError}</p>}
         <div className="dialog-actions sticky">
-          <button type="button" className="secondary" onClick={onClose}>
+          <button type="button" className="secondary" disabled={saving} onClick={close}>
             取消
           </button>
-          <button type="submit">保存</button>
+          <button type="submit" disabled={saveDisabled}>{saving ? '保存中…' : '保存'}</button>
         </div>
       </form>
       <AiSettings />

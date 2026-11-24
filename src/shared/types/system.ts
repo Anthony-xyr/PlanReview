@@ -1,6 +1,8 @@
 import type { TimeEntry } from './plan'
 
 export type ThemeMode = 'system' | 'light' | 'dark'
+export type BackgroundMode = 'plain' | 'time' | 'custom'
+export type BackgroundFit = 'cover' | 'contain'
 
 export interface Settings {
   /** 一天从几点算起，之前的时间归前一天 */
@@ -37,6 +39,11 @@ export interface Settings {
   weeklyReviewDay: number
   /** 外观：跟随系统、浅色、深色 */
   theme: ThemeMode
+  /** 主窗口背景，与深浅配色独立 */
+  backgroundMode: BackgroundMode
+  backgroundFit: BackgroundFit
+  /** 自定义图片的不透明度，0–100 */
+  backgroundOpacity: number
 }
 
 export type ReminderKind = 'session-end' | 'sleep-lead' | 'sleep' | 'leave' | 'block-start' | 'block-end'

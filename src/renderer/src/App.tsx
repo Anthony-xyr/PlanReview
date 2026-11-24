@@ -10,6 +10,7 @@ import { DialogHost } from './app/DialogHost'
 import { resolveCommandAction, type ActiveDialog, type ToolActionId, type View } from './app/navigation'
 import { Sidebar } from './app/Sidebar'
 import { ViewHost } from './app/ViewHost'
+import { WindowBackground } from './components/WindowBackground'
 
 export type { View } from './app/navigation'
 
@@ -20,6 +21,7 @@ export function App() {
   const [categories, setCategories] = useState<Category[]>([])
   const [inboxCount, setInboxCount] = useState(0)
   const [settings, setSettings] = useState<Settings | null>(null)
+  const [backgroundImage, setBackgroundImage] = useState<string | null>()
   const [running, setRunning] = useState<TimeEntry | null>(null)
   const [runningTask, setRunningTask] = useState<Task | null>(null)
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null)
@@ -51,6 +53,19 @@ export function App() {
       setRunningTask(r?.taskId ? await window.api.tasks.get(r.taskId) : null)
     })().catch((e) => setToast({ text: errorText(e), error: true }))
   }, [version])
+
+  // 只有在主窗口要显示图片或打开外观设置时，才读取已保存的背景。
+  const needsBackgroundImage = settings?.backgroundMode === 'custom' || dialog?.kind === 'settings'
+  useEffect(() => {
+    if (!needsBackgroundImage || backgroundImage !== undefined) return
+    let active = true
+    window.api.settings.getBackgroundImage().then((image) => {
+      if (active) setBackgroundImage((current) => current === undefined ? image : current)
+    }).catch((e) => {
+      if (active) setToast({ text: errorText(e), error: true })
+    })
+    return () => { active = false }
+  }, [needsBackgroundImage, backgroundImage])
 
   // Subscribe to cross-window data updates and tray/float commands.
   useEffect(() => {
@@ -119,8 +134,11 @@ export function App() {
     }
   }
 
+  const showWallpaper = settings.backgroundMode === 'custom' && !!backgroundImage && settings.backgroundOpacity > 0
+  const showBackground = settings.backgroundMode === 'time' || showWallpaper
   return (
-    <div className={`app${isCustomTitleBar ? ' has-titlebar' : ''}`}>
+    <div className={`app${isCustomTitleBar ? ' has-titlebar' : ''}${showBackground ? ' has-background' : ''}${showWallpaper ? ' has-wallpaper' : ''}`}>
+      <WindowBackground mode={settings.backgroundMode} fit={settings.backgroundFit} opacity={settings.backgroundOpacity} image={backgroundImage} />
       {isCustomTitleBar && (
         <div className="window-titlebar">
           <div className="window-titlebar-left">
@@ -180,6 +198,14 @@ export function App() {
       )}
 
       <DialogHost
+        backgroundImage={backgroundImage}
+        onThemeChange={async (theme) => setSettings(await window.api.settings.update({ theme }))}
+        onSaveSettings={async (patch, image) => {
+          const saved = await window.api.settings.update(patch, image)
+          setSettings(saved)
+          if (image !== undefined) setBackgroundImage(image)
+          setVersion((v) => v + 1)
+        }}
         dialog={dialog}
         settings={settings}
         categories={categories}

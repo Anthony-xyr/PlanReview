@@ -17,6 +17,9 @@ type SoftwareUpdateController = ReturnType<typeof useSoftwareUpdate>
 interface Props {
   dialog: ActiveDialog | null
   settings: Settings
+  backgroundImage?: string | null
+  onThemeChange: (theme: Settings['theme']) => Promise<void>
+  onSaveSettings: (patch: Partial<Settings>, image?: string | null) => Promise<void>
   categories: Category[]
   running: TimeEntry | null
   runningTask: Task | null
@@ -31,6 +34,9 @@ interface Props {
 export function DialogHost({
   dialog,
   settings,
+  backgroundImage,
+  onThemeChange,
+  onSaveSettings,
   categories,
   running,
   runningTask,
@@ -124,13 +130,15 @@ export function DialogHost({
       {dialog?.kind === 'settings' && (
         <SettingsDialog
           settings={settings}
+          backgroundImage={backgroundImage}
+          onThemeChange={onThemeChange}
           updateState={softwareUpdate.state}
           updateReadError={softwareUpdate.readError}
           onUpdateRestart={softwareUpdate.requestRestart}
           onClose={close}
-          onSave={async (patch) => {
-            const ok = await mutate(() => window.api.settings.update(patch))
-            if (ok) close()
+          onSave={async (patch, image) => {
+            await onSaveSettings(patch, image)
+            close()
           }}
         />
       )}
