@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, Notification, safeStorage, screen, shell, Tray } from 'electron'
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, safeStorage, screen, shell, Tray } from 'electron'
 import type {
   AiConfigPatch,
   CaptureDraft,
@@ -209,7 +209,7 @@ function sendCommand(cmd: MainCommand): void {
 // 只读通道不触发刷新
 const READ_ONLY = new Set([
   'tasks:list', 'tasks:get', 'tasks:lineage', 'categories:list', 'tags:list', 'plan:list', 'plan:startedIds',
-  'entries:list', 'entries:running', 'settings:get', 'reminders:current', 'win:status',
+  'entries:list', 'entries:running', 'settings:get', 'settings:getBackgroundImage', 'reminders:current', 'win:status',
   'ai:getConfig', 'ai:test', 'ai:parseCapture', 'ai:reparseCapture', 'ai:parseSchedule', 'courses:list', 'habits:list',
   // 首次调用会定下当天的随机推送，但界面上没有可见变化
   'resurface:get', 'review:summary',
@@ -250,9 +250,10 @@ function registerIpc(): void {
     'entries:setTarget': (endAt: string | null) => time.setTarget(endAt),
     'entries:setReason': (id: string, reason) => time.setReason(id, reason),
     'settings:get': () => time.getSettings(),
-    'settings:update': (patch: Partial<Settings>) => {
+    'settings:getBackgroundImage': () => time.getBackgroundImage(),
+    'settings:update': (patch: Partial<Settings>, backgroundImage?: string | null) => {
       const previousFloatingEnabled = time.getSettings().floatingEnabled
-      const s = time.updateSettings(patch)
+      const s = time.updateSettings(patch, backgroundImage)
       if (s.floatingEnabled !== previousFloatingEnabled) {
         floatIntent = 'auto'
         focusCaptureWhenReady = false
@@ -734,6 +735,9 @@ if (!app.requestSingleInstanceLock()) {
     createMainWindow()
     createTray()
     watchTheme()
+    powerMonitor.on('resume', () => {
+      if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('system-resume')
+    })
     applySettings(settings)
     tick()
     tickInterval = setInterval(tick, TICK_MS)

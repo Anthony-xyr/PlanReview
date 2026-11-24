@@ -4,6 +4,7 @@ import { App } from './App'
 import { FloatApp } from './float/FloatApp'
 import { TimerOverlay } from './timer/TimerOverlay'
 import './styles.css'
+import './background.css'
 
 const route = location.hash
 document.documentElement.classList.toggle('is-float', route === '#float')

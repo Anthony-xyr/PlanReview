@@ -53,7 +53,11 @@ const api: Api & { onFocusCapture(cb: () => void): () => void } = {
     setTarget: call('entries:setTarget'),
     setReason: call('entries:setReason')
   } as Api['entries'],
-  settings: { get: call('settings:get'), update: call('settings:update') } as Api['settings'],
+  settings: {
+    get: call('settings:get'),
+    getBackgroundImage: call('settings:getBackgroundImage'),
+    update: call('settings:update')
+  } as Api['settings'],
   reminders: {
     current: call('reminders:current'),
     dismiss: call('reminders:dismiss'),
@@ -62,7 +66,8 @@ const api: Api & { onFocusCapture(cb: () => void): () => void } = {
   } as Api['reminders'],
   events: {
     onDataChanged: (cb: () => void) => on('data-changed', cb),
-    onCommand: (cb: (cmd: MainCommand) => void) => on('command', cb)
+    onCommand: (cb: (cmd: MainCommand) => void) => on('command', cb),
+    onResume: (cb: () => void) => on('system-resume', cb)
   },
   win: {
     openMain: call('win:openMain'),

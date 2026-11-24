@@ -3,6 +3,7 @@ import type { Category, Settings, StartTimerInput, Task, TimeEntry } from '@shar
 import { TasksView, type TaskViewKind } from './components/TasksView'
 import { TodayView } from './components/TodayView'
 import { SettingsDialog } from './components/SettingsDialog'
+import { WindowBackground } from './components/WindowBackground'
 import { ImportDialog } from './components/ImportDialog'
 import { DailyReviewDialog } from './components/DailyReviewDialog'
 import { WeeklyView } from './components/WeeklyView'
@@ -25,6 +26,7 @@ export function App() {
   const [categories, setCategories] = useState<Category[]>([])
   const [inboxCount, setInboxCount] = useState(0)
   const [settings, setSettings] = useState<Settings | null>(null)
+  const [backgroundImage, setBackgroundImage] = useState<string | null>()
   const [running, setRunning] = useState<TimeEntry | null>(null)
   const [runningTask, setRunningTask] = useState<Task | null>(null)
   const [stopping, setStopping] = useState(false)
@@ -59,6 +61,19 @@ export function App() {
       setRunningTask(r?.taskId ? await window.api.tasks.get(r.taskId) : null)
     })().catch((e) => setToast({ text: errorText(e), error: true }))
   }, [version])
+
+  // 只有在主窗口要显示图片或打开外观设置时，才读取已保存的背景。
+  const needsBackgroundImage = settings?.backgroundMode === 'custom' || showSettings
+  useEffect(() => {
+    if (!needsBackgroundImage || backgroundImage !== undefined) return
+    let active = true
+    window.api.settings.getBackgroundImage().then((image) => {
+      if (active) setBackgroundImage((current) => current === undefined ? image : current)
+    }).catch((e) => {
+      if (active) setToast({ text: errorText(e), error: true })
+    })
+    return () => { active = false }
+  }, [needsBackgroundImage, backgroundImage])
 
   // 其他窗口（悬浮窗）改了数据，或托盘 / 悬浮窗请求打开某个流程
   useEffect(() => {
@@ -113,8 +128,11 @@ export function App() {
   const firstCategory = categories.find((c) => !c.archived)?.id ?? null
   const isCustomTitleBar = window.api.win.platform === 'win32'
 
+  const showWallpaper = settings.backgroundMode === 'custom' && !!backgroundImage && settings.backgroundOpacity > 0
+  const showBackground = settings.backgroundMode === 'time' || showWallpaper
   return (
-    <div className={`app${isCustomTitleBar ? ' has-titlebar' : ''}`}>
+    <div className={`app${isCustomTitleBar ? ' has-titlebar' : ''}${showBackground ? ' has-background' : ''}${showWallpaper ? ' has-wallpaper' : ''}`}>
+      <WindowBackground mode={settings.backgroundMode} fit={settings.backgroundFit} opacity={settings.backgroundOpacity} image={backgroundImage} />
       {isCustomTitleBar && (
         <div className="window-titlebar">
           <div className="window-titlebar-left">
@@ -295,10 +313,15 @@ export function App() {
       {showSettings && (
         <SettingsDialog
           settings={settings}
+          backgroundImage={backgroundImage}
+          onThemeChange={async (theme) => setSettings(await window.api.settings.update({ theme }))}
           onClose={() => setShowSettings(false)}
-          onSave={async (patch) => {
-            const ok = await mutate(() => window.api.settings.update(patch))
-            if (ok) setShowSettings(false)
+          onSave={async (patch, image) => {
+            const saved = await window.api.settings.update(patch, image)
+            setSettings(saved)
+            if (image !== undefined) setBackgroundImage(image)
+            setVersion((v) => v + 1)
+            setShowSettings(false)
           }}
         />
       )}

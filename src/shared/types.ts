@@ -151,9 +151,16 @@ export interface Settings {
   weeklyReviewDay: number
   /** 外观：跟随系统、浅色、深色 */
   theme: ThemeMode
+  /** 主窗口背景，与深浅配色独立 */
+  backgroundMode: BackgroundMode
+  backgroundFit: BackgroundFit
+  /** 自定义图片的不透明度，0–100 */
+  backgroundOpacity: number
 }
 
 export type ThemeMode = 'system' | 'light' | 'dark'
+export type BackgroundMode = 'plain' | 'time' | 'custom'
+export type BackgroundFit = 'cover' | 'contain'
 
 // ---------- 找回 ----------
 
@@ -578,6 +585,7 @@ export interface Api {
     onDataChanged(cb: () => void): () => void
     /** 主窗口：被要求打开某个流程 */
     onCommand(cb: (cmd: MainCommand) => void): () => void
+    onResume(cb: () => void): () => void
   }
   win: {
     openMain(cmd?: MainCommand): Promise<void>
@@ -596,7 +604,9 @@ export interface Api {
   }
   settings: {
     get(): Promise<Settings>
-    update(patch: Partial<Settings>): Promise<Settings>
+    getBackgroundImage(): Promise<string | null>
+    /** 图片为本地转换后的 WebP；undefined 保留，null 移除。与设置一起保存。 */
+    update(patch: Partial<Settings>, backgroundImage?: string | null): Promise<Settings>
   }
   ai: {
     getConfig(): Promise<AiConfigView>
