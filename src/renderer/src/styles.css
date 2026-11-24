@@ -781,3 +781,4 @@ button.link.cat-del:hover { color: var(--danger); }
 .update-banner-main { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
 .update-banner-main small { display: block; }
 .update-banner .update-dismiss { padding-inline: 8px; font-size: 16px; }
+.update-confirmation-task { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }

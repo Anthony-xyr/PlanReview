@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import type { UpdateRelease, UpdateState } from '@shared/update'
+import { useEffect, useRef, useState } from 'react'
+import type { UpdateRelease, UpdateSnapshot, UpdateState } from '@shared/update'
 import { errorText } from '../ui'
 
 const UI_MEMORY = 'planreview.update.dismissals'
@@ -15,8 +15,13 @@ function visibilityKey(runId: string, key: string, dismiss = false): boolean {
 }
 
 export function useSoftwareUpdate() {
-  const [state, setState] = useState<UpdateState | null>(null)
+  const [state, setState] = useState<UpdateSnapshot | null>(null)
   const [readError, setReadError] = useState<string | null>(null)
+  const restartTrigger = useRef<HTMLButtonElement | null>(null)
+  const requestRestart = (trigger: HTMLButtonElement) => {
+    restartTrigger.current = trigger
+    return window.api.update.restart()
+  }
   useEffect(() => {
     let alive = true
     let received = false
@@ -26,7 +31,7 @@ export function useSoftwareUpdate() {
     }).catch(() => { if (alive && !received) setReadError('暂时无法读取更新状态。') })
     return () => { alive = false; off() }
   }, [])
-  return { state, readError }
+  return { state, readError, restartTrigger, requestRestart }
 }
 
 function statusText(state: UpdateState): string {
@@ -68,7 +73,12 @@ function ReleaseDetails({ release, open }: { release: UpdateRelease; open: () =>
   )
 }
 
-export function SoftwareUpdateSettings({ state, readError }: { state: UpdateState | null; readError: string | null }) {
+interface UpdateEntryProps {
+  state: UpdateState | null
+  onRestart: (trigger: HTMLButtonElement) => Promise<void>
+}
+
+export function SoftwareUpdateSettings({ state, readError, onRestart }: UpdateEntryProps & { readError: string | null }) {
   const { error, busy, run } = useUpdateAction()
   const open = () => { void run(() => window.api.update.openReleases()) }
   const unsupported = !state || state.status === 'unsupported'
@@ -90,7 +100,10 @@ export function SoftwareUpdateSettings({ state, readError }: { state: UpdateStat
       <div className="update-actions">
         <button type="button" className="secondary" disabled={unsupported || busy || checking || state?.status === 'downloaded'}
           onClick={() => { void run(() => window.api.update.check()) }}>检查更新</button>
-        {state?.status === 'downloaded' && <button type="button" disabled={busy} onClick={() => { void run(() => window.api.update.restart()) }}>重启并更新</button>}
+        {state?.status === 'downloaded' && <button type="button" disabled={busy} onClick={(event) => {
+          const trigger = event.currentTarget
+          void run(() => onRestart(trigger))
+        }}>重启并更新</button>}
         {state?.status === 'available' && state.mode === 'check-only' && <button type="button" className="secondary" onClick={open}>前往下载</button>}
       </div>
       {state && <small className="muted">上次检查：{state.lastCheckedAt ? new Date(state.lastCheckedAt).toLocaleString('zh-CN') : '尚未检查'}</small>}
@@ -108,7 +121,7 @@ export function SoftwareUpdateSettings({ state, readError }: { state: UpdateStat
   )
 }
 
-export function SoftwareUpdateBanner({ state }: { state: UpdateState | null }) {
+export function SoftwareUpdateBanner({ state, onRestart }: UpdateEntryProps) {
   const { error, busy, run } = useUpdateAction()
   const [dismissed, setDismissed] = useState<string[]>([])
   if (!state) return null
@@ -127,7 +140,10 @@ export function SoftwareUpdateBanner({ state }: { state: UpdateState | null }) {
         </div>
         <div className="update-actions">
           {release && (state.mode === 'download' ? <>
-            <button type="button" disabled={busy} onClick={() => { void run(() => window.api.update.restart()) }}>重启并更新</button>
+            <button type="button" disabled={busy} onClick={(event) => {
+              const trigger = event.currentTarget
+              void run(() => onRestart(trigger))
+            }}>重启并更新</button>
             <button type="button" className="secondary" onClick={dismiss}>稍后</button>
           </> : <button type="button" className="secondary" onClick={open}>前往下载</button>)}
           <button type="button" className="secondary update-dismiss" aria-label="关闭软件更新提示" onClick={dismiss}>×</button>

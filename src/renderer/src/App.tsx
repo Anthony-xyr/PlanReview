@@ -4,6 +4,7 @@ import { TasksView, type TaskViewKind } from './components/TasksView'
 import { TodayView } from './components/TodayView'
 import { SettingsDialog } from './components/SettingsDialog'
 import { SoftwareUpdateBanner, useSoftwareUpdate } from './components/SoftwareUpdate'
+import { UpdateConfirmDialog } from './components/UpdateConfirmDialog'
 import { ImportDialog } from './components/ImportDialog'
 import { DailyReviewDialog } from './components/DailyReviewDialog'
 import { WeeklyView } from './components/WeeklyView'
@@ -169,7 +170,7 @@ export function App() {
       </nav>
 
       <div className="content">
-        <SoftwareUpdateBanner state={softwareUpdate.state} />
+        <SoftwareUpdateBanner state={softwareUpdate.state} onRestart={softwareUpdate.requestRestart} />
         {running && <TimerBar running={running} onStop={() => setStopping(true)} onExtend={() => setExtending(true)} />}
         {reminder && (
           <div className="reminder-host">
@@ -300,11 +301,20 @@ export function App() {
           settings={settings}
           updateState={softwareUpdate.state}
           updateReadError={softwareUpdate.readError}
+          onUpdateRestart={softwareUpdate.requestRestart}
           onClose={() => setShowSettings(false)}
           onSave={async (patch) => {
             const ok = await mutate(() => window.api.settings.update(patch))
             if (ok) setShowSettings(false)
           }}
+        />
+      )}
+      {softwareUpdate.state?.confirmation && (
+        <UpdateConfirmDialog
+          confirmation={softwareUpdate.state.confirmation}
+          returnFocus={softwareUpdate.state.confirmation.source === 'main' ? softwareUpdate.restartTrigger.current : null}
+          onDecision={(id, accept) => window.api.update.respondToRestart(id, accept)}
+          onError={(message) => notify(message, true)}
         />
       )}
     </div>
