@@ -13,7 +13,7 @@ const tree = realpathSync(process.cwd())
 assert.equal(process.platform, 'win32')
 assert.equal(path.basename(tree), 'auto-update')
 assert.equal(path.basename(path.dirname(tree)), 'PlanReview-wt')
-const evidence = path.join(tree, 'dist', 'update-verify')
+const evidence = path.join(tree, 'dist', 'update-verify', 'round2')
 const fixture = realpathSync((await readFile(path.join(evidence, 'latest-electron-fixture.txt'), 'utf8')).trim())
 const spec = JSON.parse(await readFile(path.join(fixture, 'fixture.json'), 'utf8'))
 assert.equal(spec.root, fixture)
@@ -115,6 +115,89 @@ const tray = (run) => command(run, 'tray')
 const targetTray = `重启并更新到 ${spec.next.version}`
 const updateSelector = '.software-update-settings'
 const banner = (run) => render(run, "document.querySelector('.update-banner')?.innerText ?? ''")
+const confirmSelector = 'dialog.update-confirmation[open]'
+const confirmation = (run) => render(run, `(() => {
+  const dialog = document.querySelector(${JSON.stringify(confirmSelector)});
+  if (!dialog) return null;
+  const title = document.getElementById(dialog.getAttribute('aria-labelledby'));
+  const description = document.getElementById(dialog.getAttribute('aria-describedby'));
+  const name = dialog.querySelector('.update-confirmation-task');
+  const width = dialog.getBoundingClientRect().width;
+  return { role: dialog.getAttribute('role'), modal: dialog.matches(':modal'),
+    title: title?.textContent, description: description?.textContent, task: name?.textContent,
+    focus: document.activeElement?.textContent.trim(), width, titleFits: name.scrollWidth <= name.clientWidth,
+    ellipsis: getComputedStyle(name).textOverflow, buttons: [...dialog.querySelectorAll('button')].map(b => b.textContent.trim()) };
+})()`)
+const shownConfirmation = (run) => until(() => confirmation(run), 'built-in timer confirmation opened')
+const hiddenConfirmation = (run) => until(async () => (await confirmation(run)) === null, 'built-in timer confirmation closed')
+const confirmationEvents = (run) => eventList(run).filter((e) => e.event === 'update-state' && e.info.confirmation)
+const LONG_TITLE = '隔离验证用的很长计时任务标题：整理需求和记录更新结果'.repeat(16)
+
+// Chromium's input dispatch exercises hit testing, focus, and the actual React event handlers.
+// The listener observes isTrusted inputs; it never calls the update confirmation API.
+async function watchInputs(run) {
+  await render(run, `(() => {
+    if (window.updateSmokeWatchingInputs) return true;
+    window.updateSmokeWatchingInputs = true;
+    for (const type of ['click', 'keydown']) document.addEventListener(type, e => {
+      if (!e.isTrusted) return;
+      const button = e.target.closest?.('button');
+      console.info('update-smoke-trusted-input ' + JSON.stringify({ type, trusted: e.isTrusted,
+        key: e.key, shift: e.shiftKey, text: button?.textContent.trim(), scope: button?.closest('dialog, .update-banner')?.className }));
+    }, true);
+    return true;
+  })()`)
+}
+async function useMouse(run, text, selector) {
+  await watchInputs(run)
+  const point = await render(run, `(() => {
+    const region = document.querySelector(${JSON.stringify(selector)});
+    const target = [...(region?.querySelectorAll('button') ?? [])].find(b => b.textContent.trim() === ${JSON.stringify(text)});
+    if (!target || target.disabled) throw new Error('No enabled control: ' + ${JSON.stringify(text)});
+    target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    const rect = target.getBoundingClientRect();
+    const x = Math.floor((rect.left + rect.right) / 2), y = Math.floor((rect.top + rect.bottom) / 2);
+    if (!target.contains(document.elementFromPoint(x, y))) throw new Error('Input target is covered: ' + ${JSON.stringify(text)});
+    return { x, y };
+  })()`)
+  const before = eventList(run).length
+  record('CHROMIUM MOUSE', { text, selector, ...point })
+  await command(run, 'mouse', point)
+  const input = await until(() => eventList(run).slice(before).find((e) =>
+    e.event === 'trusted-input' && e.info.type === 'click' && e.info.text === text), `trusted click on ${text}`)
+  record('TRUSTED CLICK', input.info)
+  return input
+}
+async function useKey(run, key, shift = false) {
+  await watchInputs(run)
+  const before = eventList(run).length
+  await command(run, 'key', { key: key === 'Escape' ? 'Esc' : key, shift })
+  await until(() => eventList(run).slice(before).find((e) => e.event === 'trusted-input' && e.info.type === 'keydown' &&
+    e.info.key === key && e.info.shift === shift), `trusted ${shift ? 'Shift+' : ''}${key} key`)
+}
+async function assertConfirm(run, title) {
+  const info = await shownConfirmation(run)
+  assert.equal(info.role, 'alertdialog')
+  assert.equal(info.modal, true)
+  assert.equal(info.title, '现在更新吗？')
+  assert.equal(info.task, title)
+  assert.match(info.description, /会先保存这次计时，并在更新前尝试自动备份/)
+  assert.match(info.description, /安装耗时也计入已用时/)
+  assert.equal(info.focus, '稍后再说')
+  assert.deepEqual(info.buttons, ['稍后再说', '保存并更新'])
+  return info
+}
+async function unchangedAfterCancel(run, child, running) {
+  await hiddenConfirmation(run)
+  assert.equal(child.exitCode, null)
+  assert.ok(!eventList(run).some((e) => ['nsis-spawn', 'before-quit', 'quit'].includes(e.event)))
+  assert.equal(existsSync(path.join(appData(run), 'backups')), false)
+  assert.deepEqual(await render(run, 'window.api.entries.running()'), running)
+  assert.equal((await current(run)).status, 'downloaded')
+  assert.equal((await current(run)).confirmation, null)
+  assert.match(await banner(run), /已下载/)
+  assert.ok((await tray(run)).includes(targetTray))
+}
 async function showSettings(run) {
   if (!(await render(run, `!!document.querySelector(${JSON.stringify(updateSelector)})`))) await click(run, '设置', 'body')
   await until(() => render(run, `!!document.querySelector(${JSON.stringify(updateSelector + ' [role=status]')})`), 'software update settings opened')
@@ -264,7 +347,8 @@ async function smokeUI() {
   await until(() => updaterLines(run).includes('automatic check failed network'), 'offline automatic check', 40_000)
   assert.equal((await current(run)).status, 'idle')
   assert.equal(await banner(run), '')
-  assert.equal(eventList(run).filter((e) => e.event === 'native-messagebox').length, 0)
+  assert.equal(confirmationEvents(run).length, 0)
+  assert.equal(await confirmation(run), null)
   assert.equal(updaterLines(run).match(/automatic check started/g)?.length, 1)
   await checkButton(run)
   assert.match((await state(run, 'error')).error, /连不上 GitHub/)
@@ -320,7 +404,8 @@ async function smokeUI() {
   assert.match(await banner(run), /更新 0\.3\.0 已下载/)
   await capture(run, 'banner-dark', true, /./, false)
   assert.equal(await render(run, "document.querySelectorAll('dialog[open]').length"), 0)
-  assert.equal(eventList(run).filter((e) => e.event === 'native-messagebox').length, 0)
+  assert.equal(confirmationEvents(run).length, 0)
+  assert.equal(await confirmation(run), null)
   await click(run, '稍后', '.update-banner')
   assert.equal(await banner(run), '')
   assert.ok((await tray(run)).includes(targetTray))
@@ -478,18 +563,29 @@ function dbContents(run, filename = 'plan-review.db') {
     return { version, contents, hash: createHash('sha256').update(JSON.stringify(contents)).digest('hex') }
   } finally { db.close() }
 }
-async function seeded(run, label) {
-  await render(run, "window.api.settings.update({closeToTray:true,strongSound:false,leaveEnabled:false,blockReminders:false,floatingEnabled:true,launchAtLogin:false})")
+async function seeded(run, label, title = `更新中的计时 ${label}`) {
+  await render(run, "window.api.settings.update({closeToTray:true,strongSound:false,leaveEnabled:false,blockReminders:false,floatingEnabled:true,hideInFullscreen:false,launchAtLogin:false})")
   await toggleAuto(run, false)
   const completed = { title: `保留的历史记录 ${label}`, startAt: new Date(Date.now() - 120 * 60_000).toISOString(), endAt: new Date(Date.now() - 110 * 60_000).toISOString() }
   const entry = await render(run, `window.api.entries.create(${JSON.stringify(completed)})`)
   assert.ok(entry.id)
-  const running = await render(run, `window.api.entries.start(${JSON.stringify({ title: `更新中的计时 ${label}`, durationMin: 180 })})`)
-  assert.equal(running.endAt, null)
-  assert.ok(running.id && running.startAt && running.targetEndAt)
-  await until(async () => (await command(run, 'info')).windows.some((url) => url.endsWith('#timer')), 'timer window active')
+  const task = await render(run, `window.api.tasks.create(${JSON.stringify({ title: `保留的待办 ${label}`, status: 'active', tags: ['隔离验证'] })})`)
+  assert.ok(task.id)
+  const running = title === null ? null : await render(run, `window.api.entries.start(${JSON.stringify({ title, durationMin: 180 })})`)
+  if (running) {
+    assert.equal(running.endAt, null)
+    assert.ok(running.id && running.startAt && running.targetEndAt)
+    await until(async () => (await command(run, 'info')).windows.some((url) => url.endsWith('#timer')), 'timer window active')
+  }
+  // The current main renderer doesn't receive its own mutation events. Start its normal startup path
+  // after seeding, so the old and new renderers both load the same daily task recommendations.
+  const executable = (await command(run, 'info')).path
+  await command(run, 'reload')
+  await ready(run, executable)
+  await until(() => dbContents(run).contents.day_state.some((row) => row.key === 'picks' && JSON.parse(row.value).includes(task.id)), 'old renderer populated the daily recommendations')
   const actual = await render(run, 'window.api.entries.running()')
   assert.deepEqual(actual, running)
+  if (running) await until(() => render(run, "document.querySelector('.timerbar .elapsed')?.textContent"), 'timer elapsed text visible before update')
   return running
 }
 async function backupAfter(run, expected) {
@@ -509,30 +605,10 @@ async function readyToInstall(run) {
   await closeSettings(run)
   await until(async () => (await banner(run)).includes(`更新 ${spec.next.version} 已下载`), 'downloaded banner without focus grab')
   assert.ok((await tray(run)).includes(targetTray))
-  assert.equal(eventList(run).filter(({ event }) => ['nsis-spawn','native-messagebox','quit'].includes(event)).length, 0)
+  assert.equal(eventList(run).filter(({ event }) => ['nsis-spawn', 'quit'].includes(event)).length, 0)
+  assert.equal(confirmationEvents(run).length, 0)
+  assert.equal(await confirmation(run), null)
   assert.equal(existsSync(path.join(appData(run), 'backups')), false)
-}
-async function confirmedUpdate(run, response, realDialog = false) {
-  const before = eventList(run).length
-  if (!realDialog) await writeFile(path.join(run, 'next-update-choice.json'), JSON.stringify({ response }), { flag: 'wx' })
-  // The explicit install acceptance result is injected in the isolated test build only. The production IPC,
-  // checkpoint, NSIS process and restart stay real. The real native dialog can be shown and cancelled separately.
-  if (realDialog) await click(run, '重启并更新', '.update-banner')
-  else await render(run, 'void window.api.update.restart(); true')
-  const event = realDialog ? 'native-messagebox' : 'fixture-messagebox-choice'
-  const opened = await until(() => eventList(run).slice(before).find((e) => e.event === event), 'confirmation requested')
-  assert.match(opened.info.message, /正在计时/)
-  assert.match(opened.info.detail, /先保存当前计时/)
-  assert.deepEqual(opened.info.buttons, ['重启并更新','取消'])
-  if (realDialog) {
-    assert.equal(response, 1, 'this test must only cancel the actual dialog')
-    record('ACTION REQUIRED: cancel the real confirmation in the isolated test app only.', { pid: opened.pid, name: spec.shortName })
-    const choice = await until(() => eventList(run).slice(before).find((e) => e.event === 'native-messagebox-result'), 'native confirmation choice', 240_000)
-    assert.equal(choice.info, response)
-  } else {
-    assert.equal(opened.info.response, response)
-    record('FIXTURE confirmation response (not a native button click)', response)
-  }
 }
 async function verifyTransition(run, exited, wasExplicit, before) {
   await waitChild(exited, 'old app quit completely')
@@ -614,14 +690,32 @@ async function smokeInstall() {
   let running = await seeded(run, '立即更新')
   await readyToInstall(run)
   let before = dbContents(run)
-  await confirmedUpdate(run, 1, process.argv.includes('--native-cancel'))
-  assert.equal(child.exitCode, null)
-  assert.ok(!eventList(run).some((e) => e.event === 'nsis-spawn' || e.event === 'before-quit'))
-  assert.deepEqual(await render(run, 'window.api.entries.running()'), running)
-  assert.equal(existsSync(path.join(appData(run), 'backups')), false)
-  await confirmedUpdate(run, 0)
+  await useMouse(run, '重启并更新', '.update-banner')
+  await assertConfirm(run, running.title)
+  await useMouse(run, '稍后再说', confirmSelector)
+  await unchangedAfterCancel(run, child, running)
+  await useMouse(run, '重启并更新', '.update-banner')
+  await assertConfirm(run, running.title)
+  const beforeClick = await render(run, `({ now: Date.now(), elapsed: document.querySelector('.timerbar .elapsed')?.textContent })`)
+  record('BEFORE INSTALL', { ...beforeClick, running, hash: before.hash, sizes: Object.fromEntries(Object.entries(before.contents).map(([name, rows]) => [name, rows.length])) })
+  const confirmClick = await useMouse(run, '保存并更新', confirmSelector)
   const installed = await verifyTransition(run, child, true, before)
+  const ordered = eventList(run)
+  const clickIndex = ordered.findIndex((e) => e.time === confirmClick.time && e.event === 'trusted-input' && e.info.text === '保存并更新')
+  const installIndex = ordered.findIndex((e) => e.event === 'nsis-spawn')
+  assert.ok(clickIndex >= 0 && installIndex > clickIndex, 'actual button click must precede the installer')
   await verifyAfter(run, before, running, true)
+  const afterClick = await until(async () => {
+    const snapshot = await render(run, `({ now: Date.now(), elapsed: document.querySelector('.timerbar .elapsed')?.textContent })`)
+    return snapshot.elapsed && snapshot
+  }, 'running timer elapsed time rendered after restart')
+  const expectedSeconds = Math.floor((afterClick.now - Date.parse(running.startAt)) / 1000)
+  const parts = afterClick.elapsed.split(':').map(Number)
+  const shownSeconds = parts.reduce((a, b) => a * 60 + b, 0)
+  assert.ok(Number.isFinite(shownSeconds) && Math.abs(shownSeconds - expectedSeconds) <= 2, 'timer includes the entire interval since its original start')
+  assert.match(beforeClick.elapsed, /^\d+(?::\d{2}){1,2}$/)
+  assert.ok(afterClick.now > beforeClick.now)
+  record('AFTER INSTALL', { ...afterClick, expectedSeconds, shownSeconds, running, hash: before.hash })
   const relaunch = await until(() => eventList(run).find((e) => e.event === 'isolation-before-entry' && e.info.version === spec.next.version), 'installer-launched app PID')
   assert.notEqual(relaunch.pid, child.pid)
   assert.equal(installed.links.length, 2)
@@ -638,7 +732,7 @@ async function smokeInstall() {
   assert.equal(await banner(run), '')
   await leave(run, child.pid)
   await waitChild(child, 'next app after the one-time notice')
-  record('EXPLICIT INSTALL PASS: cancellation, then fixture confirmation; actual silent installer relaunched app and restored timer; one-time notice consumed.')
+  record('EXPLICIT INSTALL PASS: trusted restart, cancel and confirm clicks; silent installer relaunched the visible app; timer includes the install interval; one-time notice consumed.')
 
   run = await useRun('install-on-quit')
   await installOld(run, true)
@@ -648,14 +742,14 @@ async function smokeInstall() {
   running = await seeded(run, '退出安装')
   await readyToInstall(run)
   before = dbContents(run)
-  await click(run, '稍后', '.update-banner')
+  await useMouse(run, '稍后', '.update-banner')
   assert.equal(await banner(run), '')
   assert.equal(await command(run, 'close-to-tray'), true)
   assert.equal(child.exitCode, null)
   assert.ok(!eventList(run).some((e) => e.event === 'nsis-spawn'))
   await command(run, 'tray-click', { label: '退出' })
   await verifyTransition(run, child, false, before)
-  assert.ok(!eventList(run).some((e) => e.event === 'native-messagebox'))
+  assert.equal(confirmationEvents(run).length, 0)
   assert.ok(!eventList(run).some((e) => e.event === 'isolation-before-entry' && e.info.version === spec.next.version), 'normal exit must not relaunch without user choosing restart')
   child = launch(run, installExe)
   shutdown.add(child)
@@ -663,12 +757,122 @@ async function smokeInstall() {
   await leave(run, child.pid)
   await waitChild(child, 'normal-start app after exit update')
   record('INSTALL ON QUIT PASS: close-to-tray did not install; normal tray exit installed silently; subsequent launch resumed timer and kept same data and shortcuts.')
+
+  run = await useRun('install-no-timer')
+  await installOld(run, true)
+  child = launch(run, installExe)
+  shutdown.add(child)
+  await ready(run, installExe)
+  await seeded(run, '无计时', null)
+  await readyToInstall(run)
+  before = dbContents(run)
+  assert.ok(!before.contents.time_entries.some((row) => row.end_at === null))
+  await useMouse(run, '重启并更新', '.update-banner')
+  await verifyTransition(run, child, true, before)
+  await verifyAfter(run, before, null, true)
+  assert.equal(confirmationEvents(run).length, 0)
+  assert.equal(await confirmation(run), null)
+  const idleRelaunch = await until(() => eventList(run).find((e) => e.event === 'isolation-before-entry' && e.info.version === spec.next.version), 'idle installer-launched app PID')
+  await leave(run, idleRelaunch.pid)
+  await until(() => installation().processes.length === 0, 'no-timer app quit')
+  record('NO TIMER PASS: trusted restart click installed and relaunched directly without any confirmation event.')
   await cleanupTestInstall(run)
+}
+
+async function smokeConfirmation() {
+  await fixtureIntegrity()
+  mode = 'good'
+  await startFeed()
+  const run = await useRun('confirmation-ui')
+  const child = launch(run, oldExe)
+  shutdown.add(child)
+  await ready(run, oldExe)
+  const running = await seeded(run, '确认界面', LONG_TITLE)
+  await showSettings(run)
+  await checkButton(run)
+  await state(run, 'downloaded', 45_000)
+  assert.match(await banner(run), /已下载/)
+
+  const screenshots = []
+  for (const theme of ['light', 'dark']) {
+    await render(run, `window.api.settings.update({theme:${JSON.stringify(theme)}})`)
+    await until(() => render(run, `matchMedia('(prefers-color-scheme: dark)').matches === ${theme === 'dark'}`), `theme ${theme}`)
+    await useMouse(run, '重启并更新', updateSelector)
+    const opened = await assertConfirm(run, LONG_TITLE)
+    assert.equal(opened.ellipsis, 'ellipsis')
+    assert.equal(opened.titleFits, false)
+    assert.ok(opened.width <= 500)
+    screenshots.push(await capture(run, `confirmation-${theme}`, theme === 'dark', /./, false))
+    if (theme === 'light') {
+      const backdrop = await render(run, `(() => {
+        const modal = document.querySelector(${JSON.stringify(confirmSelector)});
+        const rect = modal.getBoundingClientRect();
+        const x = Math.floor(rect.left - 16), y = Math.floor(rect.top + 20);
+        if (x < 0 || document.elementFromPoint(x, y) !== modal) throw new Error('point did not hit dialog backdrop');
+        return { x, y };
+      })()`)
+      await command(run, 'mouse', backdrop)
+      assert.equal((await confirmation(run)).focus, '稍后再说')
+      for (const shift of [false, true]) {
+        await useKey(run, 'Tab', shift)
+        assert.equal((await confirmation(run)).focus, '保存并更新')
+        await useKey(run, 'Tab', shift)
+        assert.equal((await confirmation(run)).focus, '稍后再说')
+      }
+      await useMouse(run, '稍后再说', confirmSelector)
+    } else {
+      await useKey(run, 'Escape')
+    }
+    await unchangedAfterCancel(run, child, running)
+    assert.equal(await render(run, `document.querySelector(${JSON.stringify(updateSelector)}).contains(document.activeElement) && document.activeElement.textContent.trim()`), '重启并更新')
+    assert.ok(await render(run, "document.querySelector('dialog[aria-label=设置]').open"))
+  }
+  assert.notEqual(screenshots[0].sha256, screenshots[1].sha256)
+  await closeSettings(run)
+  await useMouse(run, '重启并更新', '.update-banner')
+  await assertConfirm(run, LONG_TITLE)
+  await useKey(run, 'Escape')
+  await unchangedAfterCancel(run, child, running)
+  assert.equal(await render(run, "document.activeElement.closest('.update-banner') !== null && document.activeElement.textContent.trim()"), '重启并更新')
+
+  assert.equal(await command(run, 'close-to-tray'), true)
+  assert.equal((await command(run, 'info')).visible, false)
+  await command(run, 'tray-click', { label: targetTray })
+  await until(async () => (await command(run, 'info')).visible, 'tray update revealed the hidden window')
+  await assertConfirm(run, LONG_TITLE)
+  assert.equal((await current(run)).confirmation.source, 'tray')
+  await useMouse(run, '稍后再说', confirmSelector)
+  await unchangedAfterCancel(run, child, running)
+
+  await command(run, 'minimize')
+  await until(async () => (await command(run, 'info')).minimized, 'main window minimized')
+  await command(run, 'tray-click', { label: targetTray })
+  await until(async () => { const info = await command(run, 'info'); return info.visible && !info.minimized }, 'tray update restored the minimized window')
+  await assertConfirm(run, LONG_TITLE)
+  await useKey(run, 'Escape')
+  await unchangedAfterCancel(run, child, running)
+
+  await useMouse(run, '重启并更新', '.update-banner')
+  await assertConfirm(run, LONG_TITLE)
+  const beforeReload = (await current(run)).confirmation.id
+  await command(run, 'reload')
+  await until(async () => !(await current(run)).confirmation, 'pending confirmation cleared on reload')
+  await unchangedAfterCancel(run, child, running)
+  await useMouse(run, '重启并更新', '.update-banner')
+  assert.notEqual((await current(run)).confirmation?.id, beforeReload)
+  await useKey(run, 'Escape')
+  await unchangedAfterCancel(run, child, running)
+  assertClean(run)
+  record('CONFIRMATION UI PASS: real Electron mouse and keyboard events; long title ellipsis, both themes, focus, cancellation, hidden and minimized tray entry, reload.')
+  await leave(run, child.pid, 86)
+  await until(() => child.exitCode !== null, 'unpacked confirmation app exited without installing')
+  assert.equal(child.exitCode, 86)
+  shutdown.delete(child)
 }
 
 async function run() {
   const scenario = process.argv[2]
-  assert.ok(['ui', 'dev', 'install', 'recover-isolated-install'].includes(scenario))
+  assert.ok(['ui', 'dev', 'confirmation', 'install', 'recover-isolated-install'].includes(scenario))
   if (scenario === 'recover-isolated-install') {
     const checkpoint = await useRun('recover')
     await fixtureIntegrity()
@@ -678,6 +882,7 @@ async function run() {
   }
   if (scenario === 'ui') await smokeUI()
   if (scenario === 'dev') await smokeDev()
+  if (scenario === 'confirmation') await smokeConfirmation()
   if (scenario === 'install') await smokeInstall()
 }
 try { await run() }

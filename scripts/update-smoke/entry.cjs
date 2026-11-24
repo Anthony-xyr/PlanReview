@@ -5,14 +5,14 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
 const cp = require('node:child_process')
-const { app, BrowserWindow, dialog, nativeTheme, Tray } = require('electron')
+const { app, BrowserWindow, nativeTheme, Tray } = require('electron')
 const { planReviewUpdateFixture: spec } = require('../package.json')
 assert.match(spec.id, /^[a-f0-9]{10}$/)
 const fixture = fs.realpathSync(spec.root)
-const tree = fs.realpathSync(path.resolve(fixture, '../../..'))
+const tree = fs.realpathSync(path.resolve(fixture, '../../../..'))
 assert.equal(path.basename(tree), 'auto-update')
 assert.equal(path.basename(path.dirname(tree)), 'PlanReview-wt')
-assert.equal(path.relative(tree, fixture), path.join('dist', 'update-verify', `electron-${spec.id}`))
+assert.equal(path.relative(tree, fixture), path.join('dist', 'update-verify', 'round2', `electron-${spec.id}`))
 const active = fs.readFileSync(path.join(fixture, 'active-case.txt'), 'utf8').trim()
 assert.match(active, /^[a-z][a-z0-9-]{0,40}$/)
 const run = fs.realpathSync(path.join(fixture, active))
@@ -94,22 +94,6 @@ Tray.prototype.setContextMenu = function (menu) {
   tray = menu
   return setMenu.call(this, menu)
 }
-const showMessageBox = dialog.showMessageBox
-try {
-  dialog.showMessageBox = function (...args) {
-    const opts = args.at(-1)
-    const override = path.join(run, 'next-update-choice.json')
-    if (!spec.development && opts.title === '重启并更新' && fs.existsSync(override)) {
-      const { response } = JSON.parse(fs.readFileSync(override, 'utf8'))
-      fs.unlinkSync(override)
-      assert.ok(response === 0 || response === 1)
-      log('fixture-messagebox-choice', { response, title: opts.title, message: opts.message, detail: opts.detail, buttons: opts.buttons })
-      return Promise.resolve({ response, checkboxChecked: false })
-    }
-    log('native-messagebox', { title: opts.title, message: opts.message, detail: opts.detail, buttons: opts.buttons })
-    return showMessageBox.apply(this, args).then((result) => { log('native-messagebox-result', result.response); return result })
-  }
-} catch (error) { log('messagebox-hook-unavailable', String(error)) }
 app.on('browser-window-created', (_event, win) => {
   const web = win.webContents
   const send = web.send
@@ -119,6 +103,12 @@ app.on('browser-window-created', (_event, win) => {
   }
   web.once('did-finish-load', () => log('loaded', { url: web.getURL(), win: win.id }))
   web.on('render-process-gone', (_e, detail) => log('renderer-gone', detail))
+  web.on('console-message', ({ message }) => {
+    const prefix = 'update-smoke-trusted-input '
+    if (!message.startsWith(prefix)) return
+    const input = JSON.parse(message.slice(prefix.length))
+    if (input.trusted === true) log('trusted-input', input)
+  })
 })
 app.on('before-quit', () => log('before-quit'))
 app.on('will-quit', () => log('will-quit'))
@@ -173,14 +163,34 @@ const interval = setInterval(() => {
       const win = mainWindow()
       switch (req.action) {
         case 'info': return { version: app.getVersion(), packaged: app.isPackaged, path: process.execPath, data: app.getPath('userData'),
-          visible: win?.isVisible() ?? false, dark: nativeTheme.shouldUseDarkColors, windows: BrowserWindow.getAllWindows().map((w) => w.webContents.getURL()) }
+          visible: win?.isVisible() ?? false, minimized: win?.isMinimized() ?? false, dark: nativeTheme.shouldUseDarkColors, windows: BrowserWindow.getAllWindows().map((w) => w.webContents.getURL()) }
         case 'render': return await win.webContents.executeJavaScript(req.source, true)
         case 'capture': return await capture(win, req.file)
-        case 'key': { win.webContents.sendInputEvent({ type: 'keyDown', keyCode: req.key }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: req.key }); return true }
+        case 'key': {
+          assert.ok(win?.isVisible())
+          const modifiers = req.shift ? ['shift'] : []
+          win.webContents.sendInputEvent({ type: 'keyDown', keyCode: req.key, modifiers })
+          win.webContents.sendInputEvent({ type: 'keyUp', keyCode: req.key, modifiers })
+          return true
+        }
+        case 'mouse': {
+          assert.ok(win?.isVisible())
+          const web = win.webContents
+          assert.equal(web.getZoomFactor(), 1)
+          const { x, y } = req
+          assert.ok(Number.isInteger(x) && Number.isInteger(y) && x >= 0 && y >= 0)
+          if (!win.isFocused()) win.focus()
+          web.sendInputEvent({ type: 'mouseMove', x, y })
+          web.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 })
+          web.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 })
+          return true
+        }
+        case 'minimize': win.minimize(); return true
         case 'tray': return tray?.items.map((item) => item.label)
         case 'tray-click': {
           const item = tray?.items.find((item) => item.label === req.label)
           assert.ok(item, `missing tray item ${req.label}`)
+          log('tray-menu-activated', { label: item.label, visible: win?.isVisible(), minimized: win?.isMinimized() })
           setTimeout(() => item.click(), 100)
           return true
         }
