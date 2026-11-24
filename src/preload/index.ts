@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { Api, MainCommand, Reminder, TimerOverlayState } from '@shared/types'
-import { UPDATE_IPC, type UpdateState } from '@shared/update'
+import { UPDATE_IPC, type UpdateSnapshot } from '@shared/update'
 
 const call =
   (channel: string) =>
@@ -60,8 +60,9 @@ const api: Api & { onFocusCapture(cb: () => void): () => void } = {
     check: call(UPDATE_IPC.check),
     setAutoCheck: call(UPDATE_IPC.setAutoCheck),
     restart: call(UPDATE_IPC.restart),
+    respondToRestart: call(UPDATE_IPC.respondToRestart),
     openReleases: call(UPDATE_IPC.openReleases),
-    onChanged: (cb: (state: UpdateState) => void) => on(UPDATE_IPC.changed, cb)
+    onChanged: (cb: (state: UpdateSnapshot) => void) => on(UPDATE_IPC.changed, cb)
   },
   reminders: {
     current: call('reminders:current'),

@@ -5,6 +5,7 @@ export const UPDATE_IPC = {
   check: 'update:check',
   setAutoCheck: 'update:setAutoCheck',
   restart: 'update:restart',
+  respondToRestart: 'update:respondToRestart',
   openReleases: 'update:openReleases',
   changed: 'update:changed'
 } as const
@@ -28,11 +29,23 @@ export interface UpdateState {
   error: string | null
 }
 
+export interface UpdateConfirmation {
+  id: string
+  version: string
+  timerTitle: string
+  source: 'main' | 'tray'
+}
+
+export interface UpdateSnapshot extends UpdateState {
+  confirmation: UpdateConfirmation | null
+}
+
 export interface UpdateApi {
-  state(): Promise<UpdateState>
+  state(): Promise<UpdateSnapshot>
   check(): Promise<void>
   setAutoCheck(enabled: boolean): Promise<void>
   restart(): Promise<void>
+  respondToRestart(id: string, accept: boolean): Promise<void>
   openReleases(): Promise<void>
-  onChanged(callback: (state: UpdateState) => void): () => void
+  onChanged(callback: (state: UpdateSnapshot) => void): () => void
 }

@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, Notification, safeStorage, screen, shell, Tray } from 'electron'
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, Notification, safeStorage, screen, shell, Tray } from 'electron'
 import type {
   AiConfigPatch,
   CaptureDraft,
@@ -36,13 +36,14 @@ import { desktopVisibility, floatIntentAfterReminder, floatIntentAfterTimerChang
 import { MacWorkspaces } from './macWorkspaces'
 import { mainWindowChrome, updateMainWindowChrome } from './mainWindowChrome'
 import { TimerWindow } from './timerWindow'
-import { UPDATE_IPC } from '@shared/update'
+import { UPDATE_IPC, type UpdateSnapshot } from '@shared/update'
 import { macReleaseChecker, windowsUpdater } from './update/adapters'
 import { snapshotBeforeUpdate } from './update/backup'
 import { prepareUpdateExit } from './update/exit'
-import { registerUpdateIpc } from './update/ipc'
+import { registerUpdateConfirmationIpc, registerUpdateIpc } from './update/ipc'
 import { updaterLog } from './update/log'
 import { UpdatePreferences } from './update/preferences'
+import { UpdateRestart, updateConfirmationNavigation } from './update/restart'
 import { UpdaterService, updateMode } from './update/service'
 
 const FLOAT_WIDTH = 320
@@ -54,7 +55,7 @@ let database: DatabaseSync | undefined
 let updates: UpdaterService | undefined
 let updatePrefs: UpdatePreferences | undefined
 let logUpdate = (_event: string): void => {}
-let preparingRestart = false
+let updateRestart: UpdateRestart | undefined
 let exitSaved = false
 let repo: Repo
 let time: TimeRepo
@@ -378,22 +379,36 @@ function initializeUpdates(db: DatabaseSync): void {
     mode,
     prefs: updatePrefs,
     port: mode === 'download' ? windowsUpdater(logUpdate) : mode === 'check-only' ? macReleaseChecker() : undefined,
-    publish: (state) => {
-      if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send(UPDATE_IPC.changed, state)
+    publish: () => {
+      restart.syncReadyVersion()
+      publish()
       // 只有待安装版本改变时才重建托盘菜单，不随下载进度重建。
-      const ready = service.readyVersion()
-      if (ready !== trayUpdateVersion) updateTray()
+      if (service.readyVersion() !== trayUpdateVersion) updateTray()
     },
     log: logUpdate
   })
+  const snapshot = (): UpdateSnapshot => ({ ...service.snapshot(), confirmation: restart.confirmation() })
+  const publish = () => {
+    const win = mainWin
+    if (quitting || !win || win.isDestroyed() || win.webContents.isDestroyed()) return
+    try { win.webContents.send(UPDATE_IPC.changed, snapshot()) }
+    catch { logUpdate('status delivery failed') }
+  }
+  const restart = new UpdateRestart({
+    readyVersion: () => service.readyVersion(), running: () => time.running(), isQuitting: () => quitting,
+    showMain, publish, install: installUpdate
+  })
+  updateRestart = restart
   updates = service
-  registerUpdateIpc(ipcMain, () => mainWin?.webContents, {
-    state: () => service.snapshot(),
+  const mainContents = () => mainWin?.webContents
+  registerUpdateIpc(ipcMain, mainContents, {
+    state: snapshot,
     check: () => service.check('manual'),
     setAutoCheck: (enabled) => service.setAutoCheck(enabled),
-    restart: restartForUpdate,
+    restart: async () => { restart.request('main') },
     openExternal: (url) => shell.openExternal(url).catch(() => { throw new Error('无法打开浏览器，请稍后再试。') })
   })
+  registerUpdateConfirmationIpc(ipcMain, mainContents, (id, accept) => restart.respond(id, accept))
 }
 
 function saveBeforeExit(version: string | null): void {
@@ -404,36 +419,21 @@ function saveBeforeExit(version: string | null): void {
     (next) => snapshotBeforeUpdate(db, app.getPath('userData'), next), logUpdate)
 }
 
-async function restartForUpdate(): Promise<void> {
-  if (preparingRestart || quitting) return
-  const version = updates?.readyVersion()
-  if (!version || !updates) throw new Error('没有已下载的更新。')
-  preparingRestart = true
+function installUpdate(version: string): void {
+  if (!updates || quitting) return
   try {
-    if (time.running()) {
-      // 仅用户主动选择“重启并更新”才会显示确认，不从后台弹窗或抢焦点。
-      if (!mainWin?.isVisible()) showMain()
-      const result = await dialog.showMessageBox(mainWin!, {
-        type: 'question', title: '重启并更新', message: '正在计时，要现在重启并更新吗？',
-        detail: '会先保存当前计时。更新后可以继续这次计时。',
-        buttons: ['重启并更新', '取消'], defaultId: 1, cancelId: 1, noLink: true
-      })
-      if (result.response !== 0 || quitting) return
-    }
     try { updatePrefs?.expectRestart(version) } catch { logUpdate('could not save update restart marker') }
     // 更新库先启动安装器，再触发 before-quit；因此必须在调用它之前保存。
     saveBeforeExit(version)
     quitting = true
     updates.installNow()
   } catch {
-    if (quitting && exitSaved) {
-      quitting = false
-      exitSaved = false
-      try { updatePrefs?.expectRestart(null) } catch { logUpdate('could not clear update restart marker') }
-    }
+    quitting = false
+    exitSaved = false
+    try { updatePrefs?.expectRestart(null) } catch { logUpdate('could not clear update restart marker') }
     logUpdate('could not start explicit update')
     throw new Error('无法启动更新安装程序，请稍后再试。')
-  } finally { preparingRestart = false }
+  }
 }
 
 // ---------- 窗口 ----------
@@ -521,7 +521,14 @@ function createMainWindow(): void {
       mainWin?.hide()
     }
   })
-  mainWin.on('closed', () => (mainWin = null))
+  const invalidateUpdateConfirmation = () => updateRestart?.invalidate()
+  mainWin.webContents.on('did-start-navigation', updateConfirmationNavigation(invalidateUpdateConfirmation))
+  mainWin.webContents.on('render-process-gone', invalidateUpdateConfirmation)
+  mainWin.on('hide', invalidateUpdateConfirmation)
+  mainWin.on('closed', () => {
+    mainWin = null
+    invalidateUpdateConfirmation()
+  })
   loadRenderer(mainWin)
 }
 
@@ -717,7 +724,9 @@ function updateTray(): void {
       { type: 'separator' },
       ...(trayUpdateVersion ? [{
         label: `重启并更新到 ${trayUpdateVersion}`,
-        click: () => { void restartForUpdate().catch(() => logUpdate('tray restart failed')) }
+        click: () => {
+          try { updateRestart?.request('tray') } catch { logUpdate('tray restart failed') }
+        }
       }] : []),
       { label: '退出', click: () => app.quit() }
     ])
@@ -840,6 +849,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('before-quit', () => {
     quitting = true
+    updateRestart?.invalidate()
     saveBeforeExit(updates?.readyVersion() ?? null)
   })
   app.on('will-quit', () => {
