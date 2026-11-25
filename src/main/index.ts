@@ -36,12 +36,27 @@ import { desktopVisibility, floatIntentAfterReminder, floatIntentAfterTimerChang
 import { MacWorkspaces } from './macWorkspaces'
 import { mainWindowChrome, updateMainWindowChrome } from './mainWindowChrome'
 import { TimerWindow } from './timerWindow'
+import { UPDATE_IPC, type UpdateSnapshot } from '@shared/update'
+import { macReleaseChecker, windowsUpdater } from './update/adapters'
+import { snapshotBeforeUpdate } from './update/backup'
+import { prepareUpdateExit } from './update/exit'
+import { registerUpdateConfirmationIpc, registerUpdateIpc } from './update/ipc'
+import { updaterLog } from './update/log'
+import { UpdatePreferences } from './update/preferences'
+import { UpdateRestart, updateConfirmationNavigation } from './update/restart'
+import { UpdaterService, updateMode } from './update/service'
 
 const FLOAT_WIDTH = 320
 const TICK_MS = 15_000
 const isMac = process.platform === 'darwin'
 const isWindows = process.platform === 'win32'
 
+let database: DatabaseSync | undefined
+let updates: UpdaterService | undefined
+let updatePrefs: UpdatePreferences | undefined
+let logUpdate = (_event: string): void => {}
+let updateRestart: UpdateRestart | undefined
+let exitSaved = false
 let repo: Repo
 let time: TimeRepo
 let center: ReminderCenter
@@ -53,6 +68,7 @@ let habits: HabitRepo
 let mainWin: BrowserWindow | null = null
 let floatWin: BrowserWindow | null = null
 let tray: Tray | null = null
+let trayUpdateVersion: string | null = null
 let quitting = false
 let hotkeyRegistered = false
 let registeredHotkey = ''
@@ -85,6 +101,7 @@ function trayIcon(kind: 'idle' | 'running'): Electron.NativeImage {
 function openDatabase(): void {
   const db = new DatabaseSync(join(app.getPath('userData'), 'plan-review.db'))
   migrate(db)
+  database = db
   repo = new Repo(db)
   time = new TimeRepo(db)
   center = new ReminderCenter(time, db)
@@ -345,6 +362,80 @@ function registerIpc(): void {
   })
 }
 
+// ---------- 软件更新 ----------
+
+function initializeUpdates(db: DatabaseSync): void {
+  const version = app.getVersion()
+  const mode = updateMode(process.platform, app.isPackaged)
+  updatePrefs = new UpdatePreferences(db)
+  if (app.isPackaged) logUpdate = updaterLog(app.getPath('userData'))
+  let installedVersion: string | null = null
+  if (app.isPackaged) {
+    try { installedVersion = updatePrefs.recordStartup(version) } catch { logUpdate('could not record first startup version') }
+  }
+  const service = new UpdaterService({
+    currentVersion: version,
+    installedVersion,
+    mode,
+    prefs: updatePrefs,
+    port: mode === 'download' ? windowsUpdater(logUpdate) : mode === 'check-only' ? macReleaseChecker() : undefined,
+    publish: () => {
+      restart.syncReadyVersion()
+      publish()
+      // 只有待安装版本改变时才重建托盘菜单，不随下载进度重建。
+      if (service.readyVersion() !== trayUpdateVersion) updateTray()
+    },
+    log: logUpdate
+  })
+  const snapshot = (): UpdateSnapshot => ({ ...service.snapshot(), confirmation: restart.confirmation() })
+  const publish = () => {
+    const win = mainWin
+    if (quitting || !win || win.isDestroyed() || win.webContents.isDestroyed()) return
+    try { win.webContents.send(UPDATE_IPC.changed, snapshot()) }
+    catch { logUpdate('status delivery failed') }
+  }
+  const restart = new UpdateRestart({
+    readyVersion: () => service.readyVersion(), running: () => time.running(), isQuitting: () => quitting,
+    showMain, publish, install: installUpdate
+  })
+  updateRestart = restart
+  updates = service
+  const mainContents = () => mainWin?.webContents
+  registerUpdateIpc(ipcMain, mainContents, {
+    state: snapshot,
+    check: () => service.check('manual'),
+    setAutoCheck: (enabled) => service.setAutoCheck(enabled),
+    restart: async () => { restart.request('main') },
+    openExternal: (url) => shell.openExternal(url).catch(() => { throw new Error('无法打开浏览器，请稍后再试。') })
+  })
+  registerUpdateConfirmationIpc(ipcMain, mainContents, (id, accept) => restart.respond(id, accept))
+}
+
+function saveBeforeExit(version: string | null): void {
+  if (exitSaved || !database) return
+  exitSaved = true
+  const db = database
+  prepareUpdateExit(version, () => db.exec('PRAGMA wal_checkpoint(PASSIVE)'),
+    (next) => snapshotBeforeUpdate(db, app.getPath('userData'), next), logUpdate)
+}
+
+function installUpdate(version: string): void {
+  if (!updates || quitting) return
+  try {
+    try { updatePrefs?.expectRestart(version) } catch { logUpdate('could not save update restart marker') }
+    // 更新库先启动安装器，再触发 before-quit；因此必须在调用它之前保存。
+    saveBeforeExit(version)
+    quitting = true
+    updates.installNow()
+  } catch {
+    quitting = false
+    exitSaved = false
+    try { updatePrefs?.expectRestart(null) } catch { logUpdate('could not clear update restart marker') }
+    logUpdate('could not start explicit update')
+    throw new Error('无法启动更新安装程序，请稍后再试。')
+  }
+}
+
 // ---------- 窗口 ----------
 
 const webPreferences = (): Electron.WebPreferences => ({
@@ -416,7 +507,7 @@ function createMainWindow(): void {
   mainWin.once('ready-to-show', () => {
     // 开机自启：Windows 传 --hidden；macOS 不支持启动参数，用系统给的 wasOpenedAtLogin 判断
     const atLogin = isMac && app.getLoginItemSettings().wasOpenedAtLogin
-    if (!process.argv.includes('--hidden') && !atLogin) mainWin?.show()
+    if (updates?.snapshot().installedVersion || (!process.argv.includes('--hidden') && !atLogin)) mainWin?.show()
   })
   // 外部链接交给系统浏览器
   mainWin.webContents.setWindowOpenHandler(({ url }) => {
@@ -430,11 +521,19 @@ function createMainWindow(): void {
       mainWin?.hide()
     }
   })
-  mainWin.on('closed', () => (mainWin = null))
+  const invalidateUpdateConfirmation = () => updateRestart?.invalidate()
+  mainWin.webContents.on('did-start-navigation', updateConfirmationNavigation(invalidateUpdateConfirmation))
+  mainWin.webContents.on('render-process-gone', invalidateUpdateConfirmation)
+  mainWin.on('hide', invalidateUpdateConfirmation)
+  mainWin.on('closed', () => {
+    mainWin = null
+    invalidateUpdateConfirmation()
+  })
   loadRenderer(mainWin)
 }
 
 function showMain(): void {
+  if (quitting) return
   if (!mainWin || mainWin.isDestroyed()) createMainWindow()
   if (mainWin!.isMinimized()) mainWin!.restore()
   mainWin!.show()
@@ -599,7 +698,8 @@ function createTray(): void {
 }
 
 function updateTray(): void {
-  if (!tray) return
+  if (!tray || quitting) return
+  trayUpdateVersion = updates?.readyVersion() ?? null
   const running = time.running()
   const s = time.getSettings()
   const floatShown = desktopVisibility(s, running !== null, fullscreenNow, floatIntent, center.get()).float
@@ -622,13 +722,13 @@ function updateTray(): void {
       { label: '今日复盘', click: () => sendCommand('review') },
       { label: '周复盘', click: () => sendCommand('weekly') },
       { type: 'separator' },
-      {
-        label: '退出',
+      ...(trayUpdateVersion ? [{
+        label: `重启并更新到 ${trayUpdateVersion}`,
         click: () => {
-          quitting = true
-          app.quit()
+          try { updateRestart?.request('tray') } catch { logUpdate('tray restart failed') }
         }
-      }
+      }] : []),
+      { label: '退出', click: () => app.quit() }
     ])
   )
 }
@@ -727,6 +827,7 @@ if (!app.requestSingleInstanceLock()) {
     }
     createAppMenu()
     openDatabase()
+    initializeUpdates(database!)
     registerIpc()
     const settings = time.getSettings()
     // 创建窗口前设置主题，让首帧、页面媒体查询和原生按钮颜色一致。
@@ -737,6 +838,7 @@ if (!app.requestSingleInstanceLock()) {
     applySettings(settings)
     tick()
     tickInterval = setInterval(tick, TICK_MS)
+    updates?.start()
   })
 
   // macOS：点 Dock 图标时把主窗口叫回来（窗口被缩到托盘后也有效）
@@ -745,8 +847,13 @@ if (!app.requestSingleInstanceLock()) {
     showMain()
   })
 
-  app.on('before-quit', () => (quitting = true))
+  app.on('before-quit', () => {
+    quitting = true
+    updateRestart?.invalidate()
+    saveBeforeExit(updates?.readyVersion() ?? null)
+  })
   app.on('will-quit', () => {
+    updates?.dispose()
     clearInterval(tickInterval)
     timerWindow.dispose()
     globalShortcut.unregisterAll()

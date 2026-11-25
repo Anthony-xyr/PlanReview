@@ -518,6 +518,7 @@ export interface TaskFilter {
 
 /** 预加载脚本暴露给界面的接口 */
 export interface Api {
+  update: import('./update').UpdateApi
   tasks: {
     list(filter?: TaskFilter): Promise<Task[]>
     get(id: string): Promise<Task | null>

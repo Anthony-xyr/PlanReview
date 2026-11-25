@@ -28,6 +28,8 @@
     "electron": "44.7.2",
     "electron-builder": "26.15.3",
     "electron-vite": "6.0.0",
+    "js-yaml": "4.3.2",
+    "jsdom": "27.2.0",
     "pdfjs-dist": "6.4.299",
     "react": "19.3.1",
     "react-dom": "19.3.1",
@@ -36,7 +38,11 @@
     "vitest": "5.0.4",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
-  "dependencies": {},
+  "dependencies": {
+    "electron-updater": "6.8.12",
+    "marked": "18.3.0",
+    "parse5": "8.1.1"
+  },
   "optionalDependencies": {
     "@rolldown/binding-win32-x64-msvc": "1.2.14",
     "koffi": "3.3.3"
