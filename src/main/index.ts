@@ -1,37 +1,21 @@
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, Notification, safeStorage, screen, shell, Tray } from 'electron'
-import type {
-  AiConfigPatch,
-  CaptureDraft,
-  DailyReviewInput,
-  ImportFile,
-  MainCommand,
-  Reminder,
-  ResurfaceAction,
-  InsightStatus,
-  SuggestedBlock,
-  ScheduleDraft,
-  Settings,
-  SystemStatus
-} from '@shared/types'
-import { dayRange } from '@shared/time'
+import type { MainCommand, Reminder, Settings } from '@shared/types'
+import { IPC_EVENTS } from '@shared/ipc'
 import { hotkeyLabel } from '@shared/format'
 import { migrate } from './db/schema'
 import { Repo } from './db/repo'
-import { TimeRepo, sleepWindow } from './db/timeRepo'
+import { TimeRepo } from './db/timeRepo'
 import { ReminderCenter, reminderSnapshot } from './reminders'
 import { isFullscreenAppActive } from './native'
 import { CourseRepo } from './db/courseRepo'
 import { AiConfigStore } from './ai/config'
+import { AiService } from './ai/service'
 import { ReviewRepo } from './db/reviewRepo'
-import { chat } from './ai/client'
-import { parseCapture, reparseCapture } from './ai/capture'
 import { HabitRepo } from './db/habitRepo'
-import { parseSchedule } from './ai/schedule'
 import { WeeklyRepo } from './db/weeklyRepo'
-import { askWeekly, generateWeekly, weekContextText, type WeekContext } from './ai/weekly'
-import { freeGaps, suggestPlan } from './ai/planner'
+import { registerAppIpc } from './ipc'
 import { desktopVisibility, floatIntentAfterReminder, floatIntentAfterTimerChange, floatMayCoverMacFullscreen, type FloatIntent } from './desktopWindows'
 import { MacWorkspaces } from './macWorkspaces'
 import { mainWindowChrome, updateMainWindowChrome } from './mainWindowChrome'
@@ -65,6 +49,7 @@ let aiConfig: AiConfigStore
 let review: ReviewRepo
 let weekly: WeeklyRepo
 let habits: HabitRepo
+let aiService: AiService
 let mainWin: BrowserWindow | null = null
 let floatWin: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -114,92 +99,7 @@ function openDatabase(): void {
     encrypt: (s) => safeStorage.encryptString(s).toString('base64'),
     decrypt: (s) => safeStorage.decryptString(Buffer.from(s, 'base64'))
   })
-}
-
-/** 测试连接：发一句最简单的话，看能不能拿到回复 */
-/** 周复盘要给 AI 的全部材料：统计、每日复盘原话、待办估时、已确认的画像 */
-function weekContext(weekStart: string): WeekContext {
-  const notes = Array.from({ length: 7 }, (_, i) => {
-    const [y, m, d] = weekStart.split('-').map(Number)
-    const dt = new Date(y, m - 1, d + i)
-    const day = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`
-    const r = review.getReview(day)
-    return { day, mood: r?.mood ?? null, note: r?.note ?? '' }
-  })
-  return {
-    stats: weekly.stats(weekStart),
-    notes,
-    categories: repo.listCategories(),
-    settings: time.getSettings(),
-    openTasks: repo.listTasks({ status: ['inbox', 'active'] }),
-    insights: weekly.acceptedInsights()
-  }
-}
-
-async function generateWeeklyReview(weekStart: string) {
-  const ep = aiConfig.endpoint()
-  const { report, insights } = await generateWeekly(ep, weekContext(weekStart), aiConfig.effort('weeklyReview'))
-  return weekly.saveReport(weekStart, report, ep.model, insights)
-}
-
-async function askWeeklyReview(weekStart: string, question: string) {
-  const q = question.trim()
-  if (!q) throw new Error('问题不能为空')
-  if (q.length > 1000) throw new Error('问题太长了')
-  const r = weekly.get(weekStart)
-  if (!r?.report) throw new Error('先生成这一周的复盘')
-  const answer = await askWeekly(aiConfig.endpoint(), weekContextText(weekContext(weekStart)), r.report, r.messages, q, aiConfig.effort('weeklyQA'))
-  // 先拿到回答再写入，失败时不留半截对话
-  weekly.addMessage(weekStart, 'user', q)
-  return weekly.addMessage(weekStart, 'assistant', answer)
-}
-
-async function suggestDayPlan(day: string, hint: string) {
-  const cfg = time.getSettings()
-  const { start, end } = dayRange(day, cfg.dayStartHour)
-  const now = new Date()
-  const from = new Date(Math.max(now.getTime(), start.getTime()))
-  if (from >= end) throw new Error('这一天已经过去了')
-  // 排到睡眠窗口开始为止
-  const sleep = sleepWindow(from, cfg)
-  const until = new Date(Math.min(end.getTime(), sleep.inside ? from.getTime() : sleep.start.getTime()))
-  const blocks = time.listBlocks(start.toISOString(), end.toISOString())
-  const scheduled = new Set(blocks.filter((b) => new Date(b.endAt) > now).map((b) => b.taskId))
-  return suggestPlan(
-    aiConfig.endpoint(),
-    {
-      day,
-      now: from,
-      gaps: freeGaps(from, until, blocks),
-      blocks,
-      tasks: repo.listTasks({ status: ['inbox', 'active'] }).filter((t) => !scheduled.has(t.id)),
-      categories: repo.listCategories(),
-      insights: weekly.acceptedInsights(),
-      hint
-    },
-    cfg.dayStartHour,
-    aiConfig.effort('planner')
-  )
-}
-
-/** 写入用户勾选的建议；逐条走正常的建块校验，有一条失败就整体回滚 */
-function acceptDayPlan(blocks: SuggestedBlock[]): { created: number } {
-  if (!Array.isArray(blocks) || blocks.length > 30) throw new Error('建议格式不对')
-  const created: string[] = []
-  try {
-    for (const b of blocks) created.push(time.createBlock({ taskId: b.taskId, title: b.title, startAt: b.startAt, endAt: b.endAt }).id)
-  } catch (e) {
-    for (const id of created) time.deleteBlock(id)
-    throw e
-  }
-  return { created: created.length }
-}
-
-async function testAi(): Promise<{ ok: true; model: string; ms: number }> {
-  const ep = aiConfig.endpoint()
-  const t = Date.now()
-  await chat(ep, [{ role: 'user', content: '只回复两个字：好的' }], { timeoutMs: 20_000 })
-  return { ok: true, model: ep.model, ms: Date.now() - t }
+  aiService = new AiService({ repo, time, review, weekly, habits, aiConfig })
 }
 
 // ---------- 广播 ----------
@@ -210,64 +110,37 @@ function allWindows(): BrowserWindow[] {
 
 /** 数据改变：通知所有窗口刷新，并立即重新计算提醒 */
 function dataChanged(from?: Electron.WebContents): void {
-  for (const w of allWindows()) if (w.webContents !== from) w.webContents.send('data-changed')
+  for (const w of allWindows()) if (w.webContents !== from) w.webContents.send(IPC_EVENTS.dataChanged)
   tick()
 }
 
 function sendCommand(cmd: MainCommand): void {
   showMain()
-  const send = () => mainWin?.webContents.send('command', cmd)
+  const send = () => mainWin?.webContents.send(IPC_EVENTS.command, cmd)
   if (mainWin?.webContents.isLoading()) mainWin.webContents.once('did-finish-load', send)
   else send()
 }
 
 // ---------- IPC ----------
 
-// 只读通道不触发刷新
-const READ_ONLY = new Set([
-  'tasks:list', 'tasks:get', 'tasks:lineage', 'categories:list', 'tags:list', 'plan:list', 'plan:startedIds',
-  'entries:list', 'entries:running', 'settings:get', 'reminders:current', 'win:status',
-  'ai:getConfig', 'ai:test', 'ai:parseCapture', 'ai:reparseCapture', 'ai:parseSchedule', 'courses:list', 'habits:list',
-  // 首次调用会定下当天的随机推送，但界面上没有可见变化
-  'resurface:get', 'review:summary',
-  'weekly:stats', 'weekly:activeWeeks', 'weekly:get', 'insights:list', 'planner:suggest'
-])
-
 function registerIpc(): void {
-  const handlers: Record<string, (...args: never[]) => unknown> = {
-    'tasks:list': (filter) => repo.listTasks(filter),
-    'tasks:get': (id: string) => repo.getTask(id),
-    'tasks:capture': (text: string, defaults) => repo.capture(text, defaults),
-    'tasks:create': (input) => repo.createTask(input),
-    'tasks:update': (id: string, patch) => repo.updateTask(id, patch),
-    'tasks:remove': (id: string) => repo.deleteTask(id),
-    'tasks:spinOff': (id: string, input) => repo.spinOff(id, input),
-    'tasks:lineage': (id: string) => repo.lineage(id),
-    'categories:list': () => repo.listCategories(),
-    'categories:create': (name: string, color: string) => repo.createCategory(name, color),
-    'categories:update': (id: string, patch) => repo.updateCategory(id, patch),
-    'categories:remove': (id: string, moveOpenTo?: string | null) => repo.removeCategory(id, moveOpenTo),
-    'categories:reorder': (ids: string[]) => repo.reorderCategories(ids),
-    'categories:openCounts': () => repo.openCountByCategory(),
-    'tags:list': () => repo.listTags(),
-    'plan:list': (from: string, to: string) => time.listBlocks(from, to),
-    'plan:startedIds': (from: string, to: string) => time.startedBlockIds(from, to),
-    'plan:create': (input) => time.createBlock(input),
-    'plan:copy': (id: string, startAt: string) => time.copyBlock(id, startAt),
-    'plan:update': (id: string, patch) => time.updateBlock(id, patch),
-    'plan:remove': (id: string) => time.deleteBlock(id),
-    'entries:list': (from: string, to: string) => time.listEntries(from, to),
-    'entries:create': (input) => time.createEntry(input),
-    'entries:update': (id: string, patch) => time.updateEntry(id, patch),
-    'entries:remove': (id: string) => time.deleteEntry(id),
-    'entries:running': () => time.running(),
-    'entries:start': (input) => time.start(input),
-    'entries:stop': (input) => time.stop(input),
-    'entries:extend': (min: number) => time.extend(min),
-    'entries:setTarget': (endAt: string | null) => time.setTarget(endAt),
-    'entries:setReason': (id: string, reason) => time.setReason(id, reason),
-    'settings:get': () => time.getSettings(),
-    'settings:update': (patch: Partial<Settings>) => {
+  registerAppIpc(ipcMain, {
+    repo,
+    time,
+    courses,
+    review,
+    weekly,
+    habits,
+    aiConfig,
+    ai: aiService,
+    center,
+    timer: timerWindow,
+    guards: {
+      isTimerSender: (sender) => timerWindow.owns(sender),
+      isFloatMainFrame: (event) => event.sender === floatWin?.webContents && event.senderFrame === event.sender.mainFrame,
+      onDataChanged: (sender) => dataChanged(sender)
+    },
+    updateSettings: (patch) => {
       const previousFloatingEnabled = time.getSettings().floatingEnabled
       const s = time.updateSettings(patch)
       if (s.floatingEnabled !== previousFloatingEnabled) {
@@ -277,55 +150,14 @@ function registerIpc(): void {
       applySettings(s)
       return s
     },
-    'ai:getConfig': () => aiConfig.view(),
-    'ai:setConfig': (patch: AiConfigPatch) => aiConfig.update(patch),
-    'ai:test': () => testAi(),
-    'ai:parseCapture': (text: string) =>
-      parseCapture(aiConfig.endpoint(), text, repo.listCategories(), repo.listTags(), new Date(), aiConfig.effort('capture'), habits.enabled()),
-    'ai:reparseCapture': (text: string, previous: CaptureDraft, feedback: string[]) => {
-      const notes = (Array.isArray(feedback) ? feedback : []).map((f) => String(f).trim().slice(0, 300)).filter(Boolean).slice(-5)
-      if (!notes.length) throw new Error('写一句哪里不对')
-      return reparseCapture(aiConfig.endpoint(), text, previous, notes, repo.listCategories(), repo.listTags(), new Date(), aiConfig.effort('capture'), habits.enabled())
-    },
-    'habits:list': () => habits.list(),
-    'habits:add': (text: string, example?: string, replacesId?: string | null) => habits.add(text, example, replacesId ?? null),
-    'habits:update': (id: string, patch: { text?: string; enabled?: boolean }) => habits.update(id, patch),
-    'habits:remove': (id: string) => habits.remove(id),
-    'habits:markUsed': (ids: string[]) => habits.markUsed(Array.isArray(ids) ? ids : []),
-    'ai:parseSchedule': (files: ImportFile[], hint: string) =>
-      parseSchedule(aiConfig.endpoint(files.some((f) => f.kind === 'image')), files, hint, aiConfig.effort('schedule')),
-    'courses:list': () => courses.list(),
-    'courses:commit': (draft: ScheduleDraft, replace: boolean) => courses.commit(draft, replace),
-    'courses:removeAll': () => courses.removeAll(),
-    'resurface:get': (day: string) => review.get(day),
-    'resurface:act': (taskId: string, action: ResurfaceAction) => review.act(taskId, action),
-    'resurface:reroll': (day: string) => review.reroll(day),
-    'resurface:dismissTidy': (day: string) => review.dismissTidy(day),
-    'review:summary': (day: string) => review.summary(day),
-    'review:save': (day: string, input: DailyReviewInput) => review.save(day, input),
-    'weekly:stats': (weekStart: string) => weekly.stats(weekStart),
-    'weekly:activeWeeks': () => weekly.activeWeeks(),
-    'weekly:get': (weekStart: string) => weekly.get(weekStart),
-    'weekly:generate': (weekStart: string) => generateWeeklyReview(weekStart),
-    'weekly:ask': (weekStart: string, question: string) => askWeeklyReview(weekStart, question),
-    'weekly:apply': (weekStart: string, id: string) => weekly.apply(weekStart, id),
-    'weekly:dismiss': (weekStart: string, id: string) => weekly.dismiss(weekStart, id),
-    'insights:list': () => weekly.listInsights(),
-    'insights:update': (id: string, patch: { status?: InsightStatus; text?: string }) => weekly.updateInsight(id, patch),
-    'insights:remove': (id: string) => weekly.removeInsight(id),
-    'planner:suggest': (day: string, hint: string) => suggestDayPlan(day, hint),
-    'planner:accept': (_day: string, blocks: SuggestedBlock[]) => acceptDayPlan(blocks),
-    'reminders:current': () => center.get(),
-    'reminders:dismiss': (id: string, scope?: 'once' | 'group') => center.dismiss(id, scope),
-    'reminders:snooze': (id: string, min: number) => center.snooze(id, min, new Date()),
-    'win:openMain': (cmd?: MainCommand) => (cmd ? sendCommand(cmd) : showMain()),
-    'win:showFloat': () => revealFloat(),
-    'win:hideFloat': concealFloat,
-    'win:floatReady': () => {
+    openMain: (cmd) => (cmd ? sendCommand(cmd) : showMain()),
+    showFloat: () => revealFloat(),
+    hideFloat: concealFloat,
+    floatReady: () => {
       floatBridgeReady = true
       focusCapture()
     },
-    'win:resizeFloat': (height: number) => {
+    resizeFloat: (height) => {
       if (!floatWin || floatWin.isDestroyed() || !Number.isFinite(height)) return
       const [w] = floatWin.getSize()
       const h = Math.max(60, Math.min(600, Math.round(height)))
@@ -335,30 +167,11 @@ function registerIpc(): void {
       floatWin.setMinimumSize(w, 60)
       floatWin.setBounds({ x: b.x, y: b.y, width: w, height: h })
     },
-    'win:status': (): SystemStatus => ({
+    status: () => ({
       hotkeyRegistered,
       fullscreenDetection: isWindows && isFullscreenAppActive() !== null,
       platform: isWindows ? 'win32' : isMac ? 'darwin' : 'linux'
     })
-  }
-  for (const [channel, fn] of Object.entries(handlers)) {
-    ipcMain.handle(channel, (e, ...args) => {
-      if (timerWindow.owns(e.sender)) throw new Error('该窗口不能使用此通道')
-      if (channel === 'win:resizeFloat' || channel === 'win:floatReady') {
-        if (e.sender !== floatWin?.webContents || e.senderFrame !== e.sender.mainFrame) throw new Error('仅悬浮窗可使用此通道')
-      }
-      const result = (fn as (...a: unknown[]) => unknown)(...args)
-      if (!READ_ONLY.has(channel) && !channel.startsWith('win:')) dataChanged(e.sender)
-      return result
-    })
-  }
-  ipcMain.handle('timer:state', (e) => {
-    if (!timerWindow.accepts(e)) throw new Error('仅顶部计时器可使用此通道')
-    return timerWindow.snapshot()
-  })
-  ipcMain.handle('timer:resize', (e, width: number) => {
-    if (!timerWindow.accepts(e)) throw new Error('仅顶部计时器可使用此通道')
-    timerWindow.resize(width)
   })
 }
 
@@ -607,7 +420,7 @@ function focusCapture(): void {
   focusCaptureWhenReady = false
   floatWin.show()
   floatWin.focus()
-  floatWin.webContents.send('focus-capture')
+  floatWin.webContents.send(IPC_EVENTS.focusCapture)
 }
 
 function revealFloat(capture = false): void {
@@ -781,7 +594,7 @@ function tick(): void {
   const sig = reminder ? JSON.stringify({ ...reminder, fresh: undefined }) : null
   if (sig !== lastReminderSig) {
     lastReminderSig = sig
-    for (const w of allWindows()) w.webContents.send('reminder', reminder)
+    for (const w of allWindows()) w.webContents.send(IPC_EVENTS.reminder, reminder)
   }
   floatIntent = floatIntentAfterReminder(floatIntent, reminder)
   updateDesktopVisibility(settings, running, reminder)
