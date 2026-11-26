@@ -75,6 +75,12 @@ let registeredHotkey = ''
 let floatIntent: FloatIntent = 'auto'
 let floatReady = false
 let floatBridgeReady = false
+/** macOS 全屏 Space 中临时承载悬浮内容的 NSPanel；普通窗口无法动态进入当前全屏 Space */
+let floatOverlay: BrowserWindow | null = null
+let overlayReady = false
+let overlayBridgeReady = false
+/** 覆盖层加载/渲染失败后先回退普通悬浮窗，避免每 15 秒重建一个坏窗口 */
+let overlayFailed = false
 let focusCaptureWhenReady = false
 let lastRunningId: string | null = null
 let fullscreenNow = false
@@ -205,7 +211,7 @@ async function testAi(): Promise<{ ok: true; model: string; ms: number }> {
 // ---------- 广播 ----------
 
 function allWindows(): BrowserWindow[] {
-  return [mainWin, floatWin].filter((w): w is BrowserWindow => !!w && !w.isDestroyed())
+  return [mainWin, floatWin, floatOverlay].filter((w): w is BrowserWindow => !!w && !w.isDestroyed())
 }
 
 /** 数据改变：通知所有窗口刷新，并立即重新计算提醒 */
@@ -321,32 +327,38 @@ function registerIpc(): void {
     'win:openMain': (cmd?: MainCommand) => (cmd ? sendCommand(cmd) : showMain()),
     'win:showFloat': () => revealFloat(),
     'win:hideFloat': concealFloat,
-    'win:floatReady': () => {
-      floatBridgeReady = true
-      focusCapture()
-    },
-    'win:resizeFloat': (height: number) => {
-      if (!floatWin || floatWin.isDestroyed() || !Number.isFinite(height)) return
-      const [w] = floatWin.getSize()
-      const h = Math.max(60, Math.min(600, Math.round(height)))
-      // 不可调大小的透明窗口在 Windows 上 setSize 只会变高、不会变矮，改用 setBounds 并放开最小尺寸
-      const b = floatWin.getBounds()
-      if (b.height === h) return
-      floatWin.setMinimumSize(w, 60)
-      floatWin.setBounds({ x: b.x, y: b.y, width: w, height: h })
-    },
     'win:status': (): SystemStatus => ({
       hotkeyRegistered,
       fullscreenDetection: isWindows && isFullscreenAppActive() !== null,
       platform: isWindows ? 'win32' : isMac ? 'darwin' : 'linux'
     })
   }
+  const floatSurface = (sender: Electron.WebContents): BrowserWindow | null =>
+    [floatWin, floatOverlay].find((w) => !!w && !w.isDestroyed() && w.webContents === sender) ?? null
+
+  ipcMain.handle('win:floatReady', (e) => {
+    if (e.senderFrame !== e.sender.mainFrame) return
+    if (e.sender === floatOverlay?.webContents) overlayBridgeReady = true
+    else if (e.sender === floatWin?.webContents) floatBridgeReady = true
+    else throw new Error('仅悬浮窗可使用此通道')
+    focusCapture()
+  })
+  ipcMain.handle('win:resizeFloat', (e, height: number) => {
+    if (e.senderFrame !== e.sender.mainFrame) return
+    const win = floatSurface(e.sender)
+    if (!win || !Number.isFinite(height)) return
+    const [w] = win.getSize()
+    const h = Math.max(60, Math.min(600, Math.round(height)))
+    const b = win.getBounds()
+    if (b.height === h) return
+    // 不可调大小的透明窗口在 Windows 上 setSize 只会变高、不会变矮，改用 setBounds 并放开最小尺寸
+    win.setMinimumSize(w, 60)
+    win.setBounds({ x: b.x, y: b.y, width: w, height: h })
+  })
+
   for (const [channel, fn] of Object.entries(handlers)) {
     ipcMain.handle(channel, (e, ...args) => {
       if (timerWindow.owns(e.sender)) throw new Error('该窗口不能使用此通道')
-      if (channel === 'win:resizeFloat' || channel === 'win:floatReady') {
-        if (e.sender !== floatWin?.webContents || e.senderFrame !== e.sender.mainFrame) throw new Error('仅悬浮窗可使用此通道')
-      }
       const result = (fn as (...a: unknown[]) => unknown)(...args)
       if (!READ_ONLY.has(channel) && !channel.startsWith('win:')) dataChanged(e.sender)
       return result
@@ -561,7 +573,10 @@ function createFloatWindow(): void {
   floatWin = win
   win.setAlwaysOnTop(true, 'floating')
   win.webContents.on('did-start-loading', () => { floatBridgeReady = false })
-  win.webContents.once('render-process-gone', () => win.destroy())
+  win.webContents.once('render-process-gone', () => {
+    overlayFailed = true
+    win.destroy()
+  })
   win.once('closed', () => {
     floatWin = null
     floatReady = false
@@ -579,6 +594,69 @@ function createFloatWindow(): void {
   })
 }
 
+/** macOS：在需要覆盖全屏 Space 时使用 NSPanel；普通悬浮窗仍保持普通窗口 */
+function createFloatOverlay(): void {
+  if (!isMac || (floatOverlay && !floatOverlay.isDestroyed())) return
+  const b = floatWin && !floatWin.isDestroyed()
+    ? floatWin.getBounds()
+    : (() => {
+        const area = screen.getPrimaryDisplay().workArea
+        return { x: area.x + area.width - FLOAT_WIDTH - 16, y: area.y + 16, width: FLOAT_WIDTH, height: 260 }
+      })()
+  const win = new BrowserWindow({
+    x: b.x,
+    y: b.y,
+    width: FLOAT_WIDTH,
+    height: b.height,
+    frame: false,
+    type: 'panel',
+    transparent: true,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    show: false,
+    title: '计划与复盘 · 全屏悬浮窗',
+    webPreferences: webPreferences()
+  })
+  floatOverlay = win
+  overlayReady = false
+  overlayBridgeReady = false
+  win.setAlwaysOnTop(true, 'screen-saver')
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true })
+  win.webContents.on('did-start-loading', () => { overlayBridgeReady = false })
+  win.webContents.once('render-process-gone', () => win.destroy())
+  win.once('closed', () => {
+    if (floatOverlay !== win) return
+    floatOverlay = null
+    overlayReady = false
+    overlayBridgeReady = false
+  })
+  win.once('ready-to-show', () => {
+    overlayReady = true
+    win.showInactive()
+    focusCapture()
+  })
+  void loadRenderer(win, '#float').catch((err: unknown) => {
+    overlayFailed = true
+    if (!win.isDestroyed()) {
+      console.error('Failed to load the fullscreen float overlay', err)
+      win.destroy()
+    }
+    if (floatWin && floatReady && !floatWin.isDestroyed() && !floatWin.isVisible() && floatIntent !== 'hide') floatWin.showInactive()
+  })
+}
+
+function destroyFloatOverlay(): void {
+  const win = floatOverlay
+  floatOverlay = null
+  overlayReady = false
+  overlayBridgeReady = false
+  overlayFailed = false
+  win?.destroy()
+}
+
 function updateDesktopVisibility(s = time.getSettings(), running = time.running(), reminder = center.get()): void {
   if (quitting) return
   const runningId = running?.id ?? null
@@ -588,26 +666,42 @@ function updateDesktopVisibility(s = time.getSettings(), running = time.running(
   const visible = desktopVisibility(s, running !== null, fullscreenNow, floatIntent, reminder)
   timerWindow.update(running, visible.timer, s.hideInFullscreen)
 
-  if (floatWin && floatReady) {
-    macWorkspaces.update(floatWin, floatMayCoverMacFullscreen(visible.float, s.hideInFullscreen, floatIntent, reminder))
+  const coverFullscreen = isMac && floatMayCoverMacFullscreen(visible.float, s.hideInFullscreen, floatIntent, reminder)
+  if (coverFullscreen && !overlayFailed) {
+    if (!floatOverlay || floatOverlay.isDestroyed()) createFloatOverlay()
+    if (floatOverlay && overlayReady && !floatOverlay.isVisible()) floatOverlay.showInactive()
+    // 覆盖层和普通悬浮窗不能同时显示，否则桌面会出现两个同样的卡片
+    floatWin?.hide()
+    if (floatWin && floatReady) macWorkspaces.update(floatWin, false)
+  } else if (coverFullscreen) {
+    // 覆盖层失败：保留普通悬浮窗作为回退，不再反复重建覆盖层。
+    if (floatWin && floatReady && !floatWin.isVisible() && floatIntent !== 'hide') floatWin.showInactive()
+    if (floatWin && floatReady) macWorkspaces.update(floatWin, false)
+  } else {
+    destroyFloatOverlay()
+    if (floatWin && floatReady) macWorkspaces.update(floatWin, false)
   }
   if (!visible.float) {
+    destroyFloatOverlay()
     if (!s.floatingEnabled) floatWin?.destroy()
     else floatWin?.hide()
   } else if (!floatWin) {
     createFloatWindow()
   } else if (floatReady) {
-    if (!floatWin.isVisible()) floatWin.showInactive()
+    // 覆盖层正在显示时不能把普通窗口再 show 回来，否则又是两个卡片
+    if (!coverFullscreen && !floatWin.isVisible()) floatWin.showInactive()
     focusCapture()
   }
 }
 
 function focusCapture(): void {
-  if (!focusCaptureWhenReady || !floatReady || !floatBridgeReady || !floatWin?.isVisible()) return
+  const surface = floatOverlay && overlayReady && !floatOverlay.isDestroyed() ? floatOverlay : floatWin
+  const bridge = surface === floatOverlay ? overlayBridgeReady : floatBridgeReady
+  if (!focusCaptureWhenReady || !surface || !bridge || !surface.isVisible()) return
   focusCaptureWhenReady = false
-  floatWin.show()
-  floatWin.focus()
-  floatWin.webContents.send('focus-capture')
+  surface.show()
+  surface.focus()
+  surface.webContents.send('focus-capture')
 }
 
 function revealFloat(capture = false): void {
