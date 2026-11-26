@@ -327,7 +327,27 @@ export class TimeRepo {
     const { taskId, title, categoryId } = this.subject(input)
     const block = input.planBlockId ? this.getBlock(input.planBlockId) : null
     if (input.planBlockId && !block) throw new Error('计划不存在')
-    if (this.running()) this.stop({})
+    const running = this.running()
+    // 同一任务已经在计时时，不再切出一条新记录；只有换到另一个计划块才需要重设本次目标。
+    if (running && taskId && running.taskId === taskId) {
+      if (!input.planBlockId || running.planBlockId === input.planBlockId) return running
+      const nowDate = this.now()
+      const now = nowDate.toISOString()
+      // 关联计划块时按该入口的语义更新本次目标，但保留原开始时间和已投入时长。
+      let planned = input.durationMin ?? null
+      if (input.durationMin === undefined) {
+        if (block && block.endAt > now) planned = Math.round((new Date(block.endAt).getTime() - nowDate.getTime()) / 60_000)
+        else planned = this.getSettings().defaultSessionMin
+      }
+      if (planned != null && planned < 1) planned = null
+      const target = planned != null ? new Date(nowDate.getTime() + planned * 60_000).toISOString() : null
+      // 目标重算后，之前针对旧目标的延长/超时原因已经失去意义，一并清掉。
+      this.db
+        .prepare('UPDATE time_entries SET plan_block_id = ?, planned_min = ?, target_end_at = ?, extended_min = 0, overrun_reason = NULL, updated_at = ? WHERE id = ?')
+        .run(input.planBlockId, planned, target, now, running.id)
+      return this.getEntry(running.id)!
+    }
+    if (running) this.stop({})
     const nowDate = this.now()
     const now = nowDate.toISOString()
     this.assertNoOverlap(now, new Date(nowDate.getTime() + 1).toISOString(), null)
