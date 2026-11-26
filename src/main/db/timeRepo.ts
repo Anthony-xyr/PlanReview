@@ -12,6 +12,7 @@ import type {
   TimeEntry
 } from '@shared/types'
 import { blockEndDue, blockEndKey, rememberDismissal } from '../reminderDismissals'
+import { countsTowardPlan, isReservedBlock } from '@shared/plan'
 
 interface BlockRow {
   id: string
@@ -171,6 +172,32 @@ export class TimeRepo {
       .prepare(`${BLOCK_SELECT} WHERE b.start_at < ? AND b.end_at > ? ORDER BY b.start_at`)
       .all(iso(to, '结束'), iso(from, '开始')) as unknown as BlockRow[]
     return rows.map(toBlock)
+  }
+
+  /** 区间内计入自主计划统计的时段（排除课表） */
+  listWorkBlocks(from: string, to: string): PlanBlock[] {
+    return this.listBlocks(from, to).filter(countsTowardPlan)
+  }
+
+  /** 区间内是否存在自主计划（不含课表） */
+  hasPlannedWork(from: string, to: string): boolean {
+    return !!this.db
+      .prepare('SELECT 1 FROM plan_blocks WHERE course_id IS NULL AND start_at < ? AND end_at > ? LIMIT 1')
+      .get(iso(to, '结束'), iso(from, '开始'))
+  }
+
+  /** 在指定时刻之后仍有计划安排的任务 ID */
+  scheduledTaskIdsAfter(after: string): Set<string> {
+    const rows = this.db
+      .prepare('SELECT DISTINCT task_id FROM plan_blocks WHERE task_id IS NOT NULL AND end_at > ?')
+      .all(iso(after, '时间')) as { task_id: string }[]
+    return new Set(rows.map((r) => r.task_id))
+  }
+
+  /** 所有计入自主计划的时段开始时刻（用于计算活跃周） */
+  workBlockStartTimes(): string[] {
+    const rows = this.db.prepare('SELECT start_at AS t FROM plan_blocks WHERE course_id IS NULL').all() as { t: string }[]
+    return rows.map((r) => r.t)
   }
 
   /** 区间内的计划有哪些被计时过。提前开始的记录本身可能在前一天。 */
@@ -379,7 +406,7 @@ export class TimeRepo {
     if (!cur) throw new Error('当前没有在计时')
     const now = this.now()
     const block = cur.planBlockId ? this.getBlock(cur.planBlockId) : null
-    const endedBlock = block && !block.taskId && !block.courseId && blockEndDue(new Date(block.endAt), now) ? block : null
+    const endedBlock = block && isReservedBlock(block) && blockEndDue(new Date(block.endAt), now) ? block : null
 
     if (!endedBlock) return this.finishTimer(cur, input, now)
 

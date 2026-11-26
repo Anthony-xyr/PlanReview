@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Category, Task } from '@shared/types'
 import { Dialog, type Mutate } from '../ui'
+import { resolveEndAt, withClock } from '@shared/plan'
 import { hhmm } from '@shared/time'
 import { CategorySelect } from './TaskDetail'
 
@@ -24,14 +25,6 @@ interface Props {
   onClose: () => void
 }
 
-/** 'HH:MM' 换到与原时刻同一个日期上；结束早于开始时视为跨过零点 */
-function withClock(base: string, clock: string): Date {
-  const d = new Date(base)
-  const [h, m] = clock.split(':').map(Number)
-  d.setHours(h, m, 0, 0)
-  return d
-}
-
 export function BlockDialog({ draft, tasks, categories, mutate, onClose }: Props) {
   const isPlan = draft.kind === 'plan'
   const live = draft.endAt === null
@@ -48,9 +41,7 @@ export function BlockDialog({ draft, tasks, categories, mutate, onClose }: Props
 
   const save = async () => {
     const s = withClock(draft.startAt, start)
-    let e = live ? null : withClock(draft.endAt!, end)
-    if (e && e <= s) e = new Date(e.getTime() + 86_400_000)
-    if (e && e.getTime() - s.getTime() > 86_400_000) e = new Date(e.getTime() - 86_400_000)
+    const e = live ? null : resolveEndAt(s, draft.endAt!, end)
     const subject = mode === 'task' ? { taskId, title: undefined, categoryId: undefined } : { taskId: null, title, categoryId: categoryId || null }
     const times = { startAt: s.toISOString(), ...(e ? { endAt: e.toISOString() } : {}) }
     const api = isPlan ? window.api.plan : window.api.entries

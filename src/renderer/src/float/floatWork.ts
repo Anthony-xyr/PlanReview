@@ -1,9 +1,10 @@
 import type { PlanBlock, StartTimerInput, Task } from '@shared/types'
+import { isPlayableBlock } from '@shared/plan'
 import { MIN_MS } from '@shared/time'
 
 export function selectFloatWork(tasks: Task[], blocks: PlanBlock[], startedPlanIds: ReadonlySet<string>, now: Date) {
   const scheduledIds = new Set(blocks.map((b) => b.taskId))
-  const playable = blocks.filter((b) => !b.courseId && b.taskStatus !== 'done' && b.taskStatus !== 'dropped')
+  const playable = blocks.filter(isPlayableBlock)
   const at = now.getTime()
   return {
     unscheduled: tasks.filter((t) => t.status === 'active' && !scheduledIds.has(t.id)),

@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { Course, CourseMeeting, ScheduleDraft } from '@shared/types'
 import { calendarMonday, parseCalendarDate } from '@shared/calendarDate'
+import { withClock } from '@shared/plan'
 
 const CATEGORY_NAME = '课程'
 const CATEGORY_COLOR = '#4a3aa7'
@@ -25,10 +26,7 @@ export function meetingDate(termStart: string, week: number, weekday: number): D
 }
 
 export function atClock(day: Date, clock: string): Date {
-  const [h, mi] = clock.split(':').map(Number)
-  const result = new Date(day.getTime())
-  result.setHours(h, mi, 0, 0)
-  return result
+  return withClock(day, clock)
 }
 
 export class CourseRepo {
