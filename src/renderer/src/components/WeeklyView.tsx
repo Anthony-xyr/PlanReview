@@ -6,6 +6,7 @@ import { dayOf, shiftDay } from '@shared/time'
 import type { Mutate } from '../ui'
 import { ChartCard, CategoryBars, DataTable, DeviationBars, Legend, StackedDays, type Series } from './charts'
 import { WeeklyReport } from './WeeklyReport'
+import './WeeklyView.css'
 
 interface Props {
   settings: Settings

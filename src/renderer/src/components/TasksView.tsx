@@ -5,6 +5,7 @@ import { formatMinutes, isOverdue, parseMinutes } from '@shared/format'
 import { CategorySelect, TaskDetail } from './TaskDetail'
 import { CaptureConfirm, useSmartCapture } from '../capture'
 import { CategoryDialog, CategoryTabs } from './CategoryManager'
+import './TasksView.css'
 
 export type TaskViewKind =
   | { kind: 'inbox' }

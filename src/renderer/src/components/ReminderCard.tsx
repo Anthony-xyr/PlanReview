@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Reminder } from '@shared/types'
 import { describeImpact } from '@shared/session'
+import './ReminderCard.css'
 
 export interface ReminderActions {
   /** 结束本次（打开结束对话框或交给主窗口） */

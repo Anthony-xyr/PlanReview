@@ -4,6 +4,7 @@ import { OVERRUN_REASONS } from '@shared/types'
 import { dayOf, dayRange, formatElapsed } from '@shared/time'
 import { isOverrun } from '@shared/session'
 import { Dialog, type Mutate } from '../ui'
+import './WrapUpDialog.css'
 
 interface Props {
   settings: Settings

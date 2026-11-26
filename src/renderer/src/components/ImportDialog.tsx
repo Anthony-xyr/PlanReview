@@ -4,6 +4,7 @@ import { calendarMonday, localCalendarKey, parseCalendarDate } from '@shared/cal
 import { Dialog, errorText } from '../ui'
 import { ACCEPT, readImportFile } from '../importFiles'
 import { requiresFallbackConfirmation, scheduleImportDateError } from './scheduleImportDate'
+import './ImportDialog.css'
 
 const WEEKDAY = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日']
 

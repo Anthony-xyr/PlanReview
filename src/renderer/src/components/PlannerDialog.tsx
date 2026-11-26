@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { PlanSuggestion } from '@shared/types'
 import { hhmm } from '@shared/time'
 import { Dialog, errorText, type Mutate } from '../ui'
+import './PlannerDialog.css'
 
 interface Props {
   day: string

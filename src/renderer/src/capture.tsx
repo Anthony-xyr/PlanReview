@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { CaptureDraft, CaptureHabit, CaptureReparse, Category, Task, TaskInput } from '@shared/types'
 import { formatMinutes, parseMinutes } from '@shared/format'
 import { errorText } from './ui'
+import './capture.css'
 
 /**
  * 速记：开了 AI 解析时先拆字段给用户确认，否则直接存原文。

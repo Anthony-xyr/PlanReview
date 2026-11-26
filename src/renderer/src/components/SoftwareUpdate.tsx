@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { UpdateRelease, UpdateSnapshot, UpdateState } from '@shared/update'
 import { errorText } from '../ui'
+import './SoftwareUpdate.css'
 
 const UI_MEMORY = 'planreview.update.dismissals'
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Category } from '@shared/types'
 import { Dialog, errorText, type Mutate } from '../ui'
+import './CategoryManager.css'
 
 /** 与主进程的默认色板一致：相邻两色在各类色觉下都能分清 */
 const PALETTE: { color: string; name: string }[] = [

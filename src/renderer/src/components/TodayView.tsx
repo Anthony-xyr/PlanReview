@@ -18,6 +18,7 @@ import {
 import { BlockDialog, type BlockDraft } from './BlockDialog'
 import { ResurfacePanel } from './Resurface'
 import { advanceItemDrag, copyModifier, DAY_MIN, isPlanCopyTarget, itemDrop, PX_PER_MIN, timelineMinuteAt, type Drag, type DragPoint } from './timelineDrag'
+import './TodayView.css'
 
 interface Props {
   settings: Settings
