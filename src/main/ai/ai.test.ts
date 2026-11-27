@@ -136,6 +136,38 @@ describe('client', () => {
       })
     ).rejects.toThrow(/API Key/)
   })
+
+  it('模型不支持非默认 temperature 时自动去掉后重试（Anthropic 与 OpenAI 均适用）', async () => {
+    let anthAttempts = 0
+    const anthFetch = (async (_u: string, init: RequestInit) => {
+      anthAttempts++
+      const b = JSON.parse(init.body as string)
+      if (b.temperature !== undefined) {
+        return new Response(JSON.stringify({ type: 'error', error: { message: 'claude-haiku-5-5 does not support non-default temperature' } }), {
+          status: 400
+        })
+      }
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: '好的' }] }), { status: 200 })
+    }) as unknown as typeof fetch
+    expect(
+      await chat({ baseUrl: 'https://api.anthropic.com', apiKey: 'k', model: 'claude-haiku-5-5', apiFormat: 'anthropic' }, [{ role: 'user', content: 'hi' }], {
+        fetchImpl: anthFetch
+      })
+    ).toBe('好的')
+    expect(anthAttempts).toBe(2)
+
+    let oaiAttempts = 0
+    const oaiFetch = (async (_u: string, init: RequestInit) => {
+      oaiAttempts++
+      const b = JSON.parse(init.body as string)
+      if (b.temperature !== undefined) {
+        return new Response(JSON.stringify({ error: { message: 'Unsupported value: temperature does not support 0.1' } }), { status: 400 })
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 })
+    }) as unknown as typeof fetch
+    expect(await chat({ baseUrl: 'https://api.openai.com/v1', apiKey: 'k', model: 'o3' }, [{ role: 'user', content: 'hi' }], { fetchImpl: oaiFetch })).toBe('ok')
+    expect(oaiAttempts).toBe(2)
+  })
 })
 
 describe('capture', () => {

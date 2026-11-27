@@ -121,16 +121,28 @@ export async function chat(
         ...(system ? { system } : {}),
         messages: anthropicMessages
       }
-      const res = await doFetch(url, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'anthropic-version': ANTHROPIC_VERSION,
-          ...(ep.apiKey ? { 'x-api-key': ep.apiKey } : {})
-        },
-        body: JSON.stringify(body),
-        signal: ctrl.signal
-      })
+      const send = (b: Record<string, unknown>) =>
+        doFetch(url, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'anthropic-version': ANTHROPIC_VERSION,
+            ...(ep.apiKey ? { 'x-api-key': ep.apiKey } : {})
+          },
+          body: JSON.stringify(b),
+          signal: ctrl.signal
+        })
+      let res = await send(body)
+      // 部分模型（如带默认采样限制的新版 Claude）拒绝非默认 temperature，去掉后重试一次
+      if (res.status === 400 && body.temperature !== undefined) {
+        const text = await res.text()
+        if (/temperature/i.test(text)) {
+          delete body.temperature
+          res = await send(body)
+        } else {
+          throw httpError(400, text)
+        }
+      }
       if (!res.ok) throw httpError(res.status, await res.text())
       const data = (await res.json()) as { content?: { type?: string; text?: unknown }[] }
       const content = (data.content ?? [])
@@ -157,15 +169,20 @@ export async function chat(
         signal: ctrl.signal
       })
     let res = await send(body)
-    // 有些服务不支持 response_format，去掉再试一次
-    if (res.status === 400 && body.response_format) {
+    // 有些服务不支持 response_format 或非默认 temperature，去掉对应字段再试一次
+    for (let retry = 0; retry < 2 && res.status === 400; retry++) {
       const text = await res.text()
-      if (/response_format|json_object/i.test(text)) {
+      let changed = false
+      if (body.response_format && /response_format|json_object/i.test(text)) {
         delete body.response_format
-        res = await send(body)
-      } else {
-        throw httpError(400, text)
+        changed = true
       }
+      if (body.temperature !== undefined && /temperature/i.test(text)) {
+        delete body.temperature
+        changed = true
+      }
+      if (!changed) throw httpError(400, text)
+      res = await send(body)
     }
     if (!res.ok) throw httpError(res.status, await res.text())
     const data = (await res.json()) as { choices?: { message?: { content?: unknown } }[] }
