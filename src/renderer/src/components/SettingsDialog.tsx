@@ -7,6 +7,7 @@ import { isMacPlatform, platformName } from '../platform'
 import { AiSettings } from './AiSettings'
 import { SoftwareUpdateSettings } from './SoftwareUpdate'
 import type { UpdateState } from '@shared/update'
+import './SettingsDialog.css'
 
 interface Props {
   settings: Settings

@@ -1,0 +1,15 @@
+.settings section { padding: 4px 0 10px; border-bottom: 1px solid var(--line-soft); margin-bottom: 10px; display: flex; flex-direction: column; gap: 6px; }
+.settings section:last-of-type { border: 0; }
+.settings h3 { font-size: 13px; margin: 4px 0 4px; }
+.settings .field { margin-bottom: 6px; }
+.dialog:has(.settings) { width: 520px; max-height: 86vh; overflow-y: auto; }
+
+.settings-section { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; }
+.settings-section h3 { margin: 0 0 6px; font-size: 14px; }
+.settings-sub { font-size: 13px; margin: 18px 0 2px; }
+.effort-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; margin-top: 8px; }
+.preset-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 10px; }
+.preset { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 14px; padding: 3px 10px; font-size: 12px; }
+.preset:hover { border-color: var(--accent); color: var(--accent-text); filter: none; }
+.habit-entry { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 12px 0 4px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px; }
+.habit-entry p { margin: 2px 0 0; }

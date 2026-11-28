@@ -10,6 +10,7 @@ import { reminderActions, useReminder } from '../reminderActions'
 import { CaptureConfirm, useSmartCapture } from '../capture'
 import { matchesPickerQuery, planTimerInput, selectFloatWork } from './floatWork'
 import { closedPicker, pickerArrowIndex, pickerState } from './pickerState'
+import './FloatApp.css'
 
 interface FloatData {
   running: TimeEntry | null

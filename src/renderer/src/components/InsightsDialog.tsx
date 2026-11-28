@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Insight } from '@shared/types'
 import { Dialog, type Mutate } from '../ui'
+import './InsightsDialog.css'
 
 const STATUS: Record<Insight['status'], string> = { pending: '待确认', accepted: '已记住', rejected: '不对' }
 

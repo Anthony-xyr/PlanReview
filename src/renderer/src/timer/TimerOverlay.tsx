@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { TimerOverlayState } from '@shared/types'
 import { desktopElapsed, timerProgress } from './timerProgress'
+import './TimerOverlay.css'
 
 export function TimerOverlay() {
   const [state, setState] = useState<TimerOverlayState | null>(null)

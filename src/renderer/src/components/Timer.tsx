@@ -4,6 +4,7 @@ import { Dialog } from '../ui'
 import { formatElapsed, hhmm } from '@shared/time'
 import { isOverrun, remainingMin } from '@shared/session'
 import { formatMinutes } from '@shared/format'
+import './Timer.css'
 
 export function useTick(ms: number) {
   const [, setN] = useState(0)

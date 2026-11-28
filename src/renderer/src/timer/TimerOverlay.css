@@ -1,0 +1,27 @@
+html.is-desktop-timer, html.is-desktop-timer body { background: transparent; overflow: hidden; }
+.desktop-timer-frame { display: flex; width: max-content; margin-inline: auto; padding: 4px 5px 5px; }
+.desktop-timer {
+  --timer-surface: rgb(250 250 248 / .96); --timer-border: rgb(30 30 30 / .30);
+  --timer-status: #4e4d48; --timer-over: #794809;
+  min-width: 0; height: 28px; padding: 0 9px;
+  display: flex; align-items: center; gap: 7px; overflow: hidden;
+  border: 1px solid var(--timer-border); border-radius: 14px;
+  background: var(--timer-surface); color: var(--text); box-shadow: 0 1px 4px rgb(0 0 0 / .32);
+  font-size: 12px; line-height: 1.2; user-select: none; transition: opacity 200ms ease-out;
+}
+@media (prefers-color-scheme: dark) {
+  .desktop-timer {
+    --timer-surface: rgb(29 29 34 / .96); --timer-border: rgb(255 255 255 / .28);
+    --timer-status: #d2d2d8; --timer-over: #ffd080;
+  }
+}
+.desktop-timer.is-near-cursor { opacity: .18; transition-duration: 110ms; }
+.desktop-timer-indicator { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--live); }
+.desktop-timer-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.desktop-timer-elapsed, .desktop-timer-left { display: grid; flex: none; text-align: end; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.desktop-timer-elapsed > span, .desktop-timer-left > span { grid-area: 1 / 1; }
+.desktop-timer-reserve { visibility: hidden; }
+.desktop-timer-left { color: var(--timer-status); }
+.desktop-timer.is-over .desktop-timer-left { color: var(--timer-over); }
+.desktop-timer.is-over .desktop-timer-indicator { background: var(--timer-over); }
+@media (prefers-reduced-motion: reduce) { .desktop-timer { transition: none; } }
