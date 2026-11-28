@@ -70,6 +70,7 @@ export interface Api {
     onDataChanged(cb: () => void): () => void
     /** 主窗口：被要求打开某个流程 */
     onCommand(cb: (cmd: MainCommand) => void): () => void
+    onResume(cb: () => void): () => void
   }
   win: {
     openMain(cmd?: MainCommand): Promise<void>
@@ -88,7 +89,9 @@ export interface Api {
   }
   settings: {
     get(): Promise<Settings>
-    update(patch: Partial<Settings>): Promise<Settings>
+    getBackgroundImage(): Promise<string | null>
+    /** 图片为本地转换后的 WebP；undefined 保留，null 移除。与设置一起保存。 */
+    update(patch: Partial<Settings>, backgroundImage?: string | null): Promise<Settings>
   }
   ai: {
     getConfig(): Promise<AiConfigView>

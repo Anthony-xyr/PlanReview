@@ -1,0 +1,214 @@
+/* 仅主窗口与预览有壁纸层，悬浮窗和默认背景不受影响。 */
+.app.has-background,
+.background-preview {
+  position: relative;
+  isolation: isolate;
+}
+
+.has-wallpaper {
+  --wallpaper-veil: 83%;
+  --wallpaper-sidebar: color-mix(in srgb, var(--side) var(--wallpaper-veil), transparent);
+  --wallpaper-surface: color-mix(in srgb, var(--bg) var(--wallpaper-veil), transparent);
+}
+
+.app.has-background {
+  --muted: #504d47;
+  --faint: #625f58;
+  --accent-text: #2948b5;
+  --line: #c8c8c6;
+  --line-soft: #d1d1ce;
+}
+
+.app.has-background > .sidebar {
+  background: color-mix(in srgb, var(--side) 60%, transparent);
+}
+
+/* 壁纸连续铺过下方，仅给文字密集的区域加半透明衬底。 */
+.app.has-wallpaper > .sidebar,
+.app.has-wallpaper .window-titlebar-left {
+  background: var(--wallpaper-sidebar);
+}
+.app.has-wallpaper .window-titlebar { background: transparent; }
+.app.has-wallpaper .page-head:not(.stacked),
+.app.has-wallpaper .pool,
+.app.has-wallpaper .timeline-head,
+.app.has-wallpaper .tasks-page > .main,
+.app.has-wallpaper .weekly-body {
+  background: var(--wallpaper-surface);
+}
+.app.has-wallpaper .grid > .gutter::before {
+  --wallpaper-gutter-fade: 32px;
+  content: '';
+  position: absolute;
+  inset: 0 calc(-1 * var(--wallpaper-gutter-fade)) 0 0;
+  background: linear-gradient(to right, var(--wallpaper-surface) calc(100% - var(--wallpaper-gutter-fade)), transparent);
+  pointer-events: none;
+}
+.app.has-wallpaper .col-entry { background: color-mix(in srgb, var(--panel) 7%, transparent); }
+.app.has-wallpaper .hour-line { border-color: rgb(128 128 140 / 38%); }
+.app.has-wallpaper .sleep-band span {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--wallpaper-surface);
+  color: color-mix(in srgb, var(--sleep) 83%, var(--text));
+}
+
+.background-layer {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--bg);
+}
+
+.background-layer > img {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+.background-layer[data-fit='contain'] { container-type: size; }
+.background-layer[data-fit='contain'] > .background-photo {
+  object-fit: contain;
+  /* 由原图比例算出留边，仅在有留边的方向把接缝渐变到下方的柔化图。 */
+  --photo-width: min(100cqw, 100cqh * var(--wallpaper-photo-ratio));
+  --photo-height: min(100cqh, 100cqw / var(--wallpaper-photo-ratio));
+  --gap-x: calc((100cqw - var(--photo-width)) / 2);
+  --gap-y: calc((100cqh - var(--photo-height)) / 2);
+  --fade-x: calc(var(--gap-x) + min(var(--gap-x), var(--photo-width) * .12, var(--wallpaper-feather, 38px)));
+  --fade-y: calc(var(--gap-y) + min(var(--gap-y), var(--photo-height) * .12, var(--wallpaper-feather, 38px)));
+  mask-image:
+    linear-gradient(to right, transparent var(--gap-x), black var(--fade-x), black calc(100% - var(--fade-x)), transparent calc(100% - var(--gap-x))),
+    linear-gradient(to bottom, transparent var(--gap-y), black var(--fade-y), black calc(100% - var(--fade-y)), transparent calc(100% - var(--gap-y)));
+  mask-composite: intersect;
+}
+.background-layer > .background-fill {
+  opacity: .88;
+  filter: blur(var(--wallpaper-blur, 22px));
+  transform: scale(1.14);
+}
+
+/* 四种矢量风格纹样直接随窗口缩放，无需下载图片。 */
+.background-layer[data-phase='dawn'] {
+  --glow: #ffe7c7;
+  --ridge: #f3d5d5;
+  --sky: #f4e6ed;
+  background:
+    radial-gradient(ellipse 37% 39% at 76% 46%, var(--glow), transparent),
+    radial-gradient(ellipse 100% 44% at 76% 117%, var(--ridge) 98%, transparent),
+    radial-gradient(ellipse 99% 42% at 12% 115%, var(--ridge) 60%, transparent),
+    linear-gradient(135deg, var(--bg) 18%, var(--sky) 86%);
+}
+
+.background-layer[data-phase='day'] {
+  --sky: #dceef1;
+  --rings: #9cbfcb37;
+  background:
+    repeating-radial-gradient(ellipse at 97% -10%, transparent 0 36px, var(--rings) 37px 38px, transparent 39px 59px),
+    radial-gradient(ellipse 73% 76% at 100% 22%, var(--sky), transparent),
+    var(--bg);
+}
+
+.background-layer[data-phase='dusk'] {
+  --glow: #f9e3d3;
+  --ridge: #e6ddf3;
+  --sky: #ede3f0;
+  background:
+    radial-gradient(ellipse 45% 34% at 17% 88%, var(--glow), transparent),
+    radial-gradient(ellipse 110% 51% at 87% 126%, var(--ridge) 98%, transparent),
+    radial-gradient(ellipse 90% 40% at 21% 118%, var(--ridge) 97%, transparent),
+    linear-gradient(155deg, var(--bg) 10%, var(--sky) 80%);
+}
+
+.background-layer[data-phase='night'] {
+  --star: #556a9633;
+  --sky: #dce2f5;
+  background:
+    radial-gradient(circle, var(--star) 0 1px, transparent 1.6px) 12px 20px / 89px 81px,
+    radial-gradient(circle, var(--star) 0 .65px, transparent 1.2px) 25px 39px / 127px 109px,
+    radial-gradient(ellipse 64% 69% at 89% 86%, var(--sky), transparent),
+    var(--bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  .has-wallpaper { --wallpaper-veil: 87%; }
+  .app.has-background {
+    --muted: #b9b7b1;
+    --faint: #aba9a3;
+    --accent-text: #b0bfff;
+    --line: #535359;
+    --line-soft: #494950;
+  }
+  .background-layer[data-phase='dawn'] { --glow: #533b34; --ridge: #392b3b; --sky: #332c38; }
+  .background-layer[data-phase='day'] { --sky: #243d42; --rings: #8dbac52e; }
+  .background-layer[data-phase='dusk'] { --glow: #533b39; --ridge: #302847; --sky: #3d2c47; }
+  .background-layer[data-phase='night'] { --star: #b9c7f64d; --sky: #293452; }
+}
+
+.background-settings { display: grid; gap: 8px; padding-top: 6px; }
+.background-settings .field { margin-bottom: 0; }
+.background-file-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.background-file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.background-opacity-caption {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.background-opacity input[type='range'] { margin: 0; padding: 0; height: 24px; accent-color: var(--accent); }
+.background-preview-wrap { margin: 0; }
+.background-preview {
+  --wallpaper-blur: 5px;
+  --wallpaper-feather: 7px;
+  width: 100%;
+  display: flex;
+  overflow: hidden;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.background-preview-wrap figcaption { margin-top: 4px; }
+.background-preview-sidebar {
+  width: 21%;
+  border-right: 1px solid var(--line);
+  background: color-mix(in srgb, var(--side) 60%, transparent);
+}
+.background-preview.has-wallpaper .background-preview-sidebar { background: var(--wallpaper-sidebar); }
+.background-preview-content { flex: 1; }
+.background-preview-sidebar,
+.background-preview-content { padding: 9% 5% 0; }
+.background-preview-today { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.background-preview-head {
+  padding: 6% 8%;
+  border-bottom: 1px solid var(--line);
+  background: var(--wallpaper-surface, var(--bg));
+}
+.background-preview-board { display: flex; flex: 1; }
+.background-preview-pool {
+  width: 28%;
+  padding: 8% 5% 0;
+  border-right: 1px solid var(--line);
+  background: var(--wallpaper-surface, var(--bg));
+}
+.background-preview-grid {
+  flex: 1;
+  background:
+    linear-gradient(to right, transparent calc(50% - 1px), var(--line) calc(50% - 1px) 50%, transparent 50%),
+    repeating-linear-gradient(to bottom, transparent 0 14px, rgb(128 128 140 / 38%) 14px 15px);
+}
+.background-preview i {
+  display: block;
+  width: 76%;
+  height: 4px;
+  margin-bottom: 7px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text) 21%, transparent);
+}
+.background-preview i:nth-child(2) { width: 52%; }
+.background-preview i:nth-child(3) { width: 63%; }
+.background-preview-head i { margin-bottom: 0; }

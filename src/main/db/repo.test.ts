@@ -17,7 +17,7 @@ afterEach(() => db.close())
 describe('schema', () => {
   it('迁移可重复执行，并预置默认大类', () => {
     migrate(db)
-    expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 10 })
+    expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 11 })
     expect(repo.listCategories().map((c) => c.name)).toEqual(['学习', '课程作业', '项目', '生活', '娱乐'])
   })
 
@@ -27,7 +27,8 @@ describe('schema', () => {
     { version: 8, reminders: true, locations: false, habits: false },
     { version: 9, reminders: true, locations: false, habits: true },
     { version: 10, reminders: false, locations: true, habits: false },
-    { version: 11, reminders: false, locations: false, habits: true }
+    { version: 11, reminders: false, locations: false, habits: true },
+    { version: 12, reminders: false, locations: false, habits: true }
   ])('真实迁移兼容 $version（提醒表 $reminders、地点列 $locations）', ({ version, reminders, locations, habits }) => {
     // 从真实公共结构构造旧版数据库形状，升级与重复打开都走应用的 migrate()。
     if (!reminders) db.exec('DROP TABLE reminder_dismissals')
@@ -35,7 +36,7 @@ describe('schema', () => {
     if (!locations) db.exec('ALTER TABLE plan_blocks DROP COLUMN location')
     if (!habits) db.exec('DROP TABLE planner_habits')
     else db.exec("INSERT INTO planner_habits (id, text, created_at, updated_at) VALUES ('keep-habit', '原有习惯', '2026-09-01', '2026-09-01')")
-    db.exec(`PRAGMA user_version = ${version}`)
+    db.exec(`DROP TABLE background_image; PRAGMA user_version = ${version}`)
 
     const insertCourse = db.prepare(`
       INSERT INTO courses (id,name,location,meetings,term_start,updated_at) VALUES (?, ?, ?, ?, '2026-09-09', '2026-09-01')
@@ -73,7 +74,8 @@ describe('schema', () => {
     }
     for (let attempt = 0; attempt < 2; attempt++) {
       migrate(db)
-      expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: Math.max(version, 10) })
+      expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: Math.max(version, 11) })
+      expect(db.prepare('SELECT id FROM background_image').all()).toEqual([])
       const rows = db.prepare('SELECT id, location, updated_at FROM plan_blocks').all()
       expect(Object.fromEntries(rows.map((r) => [r.id, r.location]))).toEqual(expected)
       expect(rows.every((r) => r.updated_at === 'original')).toBe(true)

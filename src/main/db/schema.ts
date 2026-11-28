@@ -23,6 +23,13 @@ const createPlannerHabits = `
   );
 `
 
+const createBackgroundImage = `
+  CREATE TABLE IF NOT EXISTS background_image (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    bytes BLOB NOT NULL
+  ) STRICT;
+`
+
 // 按顺序执行的迁移；PRAGMA user_version 记录已执行到第几条。
 // 主键用 UUID、每行带 updated_at，方便以后做多端同步。
 const migrations: (string | ((db: DatabaseSync) => void))[] = [
@@ -193,7 +200,9 @@ const migrations: (string | ((db: DatabaseSync) => void))[] = [
   // M9：保留排程习惯表的位置与已有记录，不在这里接入排程习惯功能。
   createPlannerHabits,
   // M10：地点列及逐次地点回填，并修复同版本号的不同旧库结构。
-  reconcilePlanLocations
+  reconcilePlanLocations,
+  // M11：图片单独存放，避免提醒和其他窗口刷新时反复读取大字段。
+  createBackgroundImage
 ]
 
 // 默认大类颜色：按固定顺序取自经过色盲校验的分类色板（相邻两色在各类色觉下都能分清）
@@ -222,7 +231,10 @@ export function migrate(db: DatabaseSync): void {
   }
 
   // 已处于较新版本的旧分支库也可能少表或少列；仅补结构，不回退版本。
-  if (current >= migrations.length) inTransaction(db, () => reconcilePlanLocations(db))
+  if (current >= 10) inTransaction(db, () => {
+    reconcilePlanLocations(db)
+    if (current >= 11) db.exec(createBackgroundImage)
+  })
 }
 
 function inTransaction(db: DatabaseSync, change: () => void): void {

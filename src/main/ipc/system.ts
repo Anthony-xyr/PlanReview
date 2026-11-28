@@ -8,7 +8,7 @@ import type { IpcRegistry } from './registry'
 export interface SystemIpcDeps {
   time: TimeRepo
   center: ReminderCenter
-  updateSettings(patch: Partial<Settings>): Settings
+  updateSettings(patch: Partial<Settings>, backgroundImage?: string | null): Settings
   openMain(cmd?: MainCommand): void
   showFloat(): void
   hideFloat(): void
@@ -24,7 +24,8 @@ export interface SystemIpcDeps {
 
 export function registerSystemIpc(reg: IpcRegistry, ipc: Pick<IpcMain, 'handle'>, deps: SystemIpcDeps): void {
   reg.handle('settings:get', () => deps.time.getSettings())
-  reg.handle('settings:update', (patch: Partial<Settings>) => deps.updateSettings(patch))
+  reg.handle('settings:getBackgroundImage', () => deps.time.getBackgroundImage())
+  reg.handle('settings:update', (patch: Partial<Settings>, backgroundImage?: string | null) => deps.updateSettings(patch, backgroundImage))
 
   reg.handle('reminders:current', () => deps.center.get())
   reg.handle('reminders:dismiss', (id: string, scope?: 'once' | 'group') => deps.center.dismiss(id, scope))

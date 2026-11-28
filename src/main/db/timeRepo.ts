@@ -11,6 +11,7 @@ import type {
   StopTimerInput,
   TimeEntry
 } from '@shared/types'
+import { BACKGROUND_IMAGE_PREFIX, MAX_BACKGROUND_IMAGE_BYTES } from '@shared/background'
 import { blockEndDue, blockEndKey, rememberDismissal } from '../reminderDismissals'
 import { countsTowardPlan, isReservedBlock } from '@shared/plan'
 
@@ -103,7 +104,10 @@ export const DEFAULT_SETTINGS: Settings = {
   inboxNagCount: 15,
   inboxNagDays: 7,
   weeklyReviewDay: 0,
-  theme: 'system'
+  theme: 'system',
+  backgroundMode: 'plain',
+  backgroundFit: 'cover',
+  backgroundOpacity: 60
 }
 
 const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/
@@ -523,7 +527,12 @@ export class TimeRepo {
     return { ...DEFAULT_SETTINGS, ...stored }
   }
 
-  updateSettings(patch: Partial<Settings>): Settings {
+  getBackgroundImage(): string | null {
+    const row = this.db.prepare('SELECT bytes FROM background_image WHERE id = 1').get() as { bytes: Uint8Array } | undefined
+    return row ? BACKGROUND_IMAGE_PREFIX + Buffer.from(row.bytes).toString('base64') : null
+  }
+
+  updateSettings(patch: Partial<Settings>, backgroundImage?: string | null): Settings {
     const intIn = (v: unknown, lo: number, hi: number) => Number.isInteger(v) && (v as number) >= lo && (v as number) <= hi
     if (patch.dayStartHour !== undefined && !intIn(patch.dayStartHour, 0, 12)) throw new Error('一天的起点要在 0–12 点之间')
     for (const key of ['sleepStart', 'sleepEnd', 'leaveTime'] as const)
@@ -540,10 +549,46 @@ export class TimeRepo {
     if (patch.inboxNagDays !== undefined && !intIn(patch.inboxNagDays, 1, 90)) throw new Error('收件箱提示天数要在 1–90 之间')
     if (patch.weeklyReviewDay !== undefined && !intIn(patch.weeklyReviewDay, 0, 6)) throw new Error('每周整理日不对')
     if (patch.theme !== undefined && !['system', 'light', 'dark'].includes(patch.theme)) throw new Error('外观设置不对')
+    if (patch.backgroundMode !== undefined && !['plain', 'time', 'custom'].includes(patch.backgroundMode)) throw new Error('背景模式不对')
+    if (patch.backgroundFit !== undefined && !['cover', 'contain'].includes(patch.backgroundFit)) throw new Error('图片适配方式不对')
+    if (patch.backgroundOpacity !== undefined && !intIn(patch.backgroundOpacity, 0, 100)) throw new Error('图片不透明度要在 0–100% 之间')
+    const bytes = backgroundImage == null ? backgroundImage : decodeBackgroundImage(backgroundImage)
+    const removesActiveImage = bytes === null && (patch.backgroundMode ?? this.getSettings().backgroundMode) === 'custom'
+    const missingImage = patch.backgroundMode === 'custom' && bytes === undefined &&
+      !this.db.prepare('SELECT 1 FROM background_image WHERE id = 1').get()
+    if (removesActiveImage || missingImage) throw new Error('请先选择一张背景图片')
+
     const upsert = this.db.prepare(
       'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
     )
-    for (const [k, v] of Object.entries(patch)) if (k in DEFAULT_SETTINGS && v !== undefined) upsert.run(k, JSON.stringify(v))
+    // 使用保存点，图片和设置即使在有外层事务时也能一起提交或回滚。
+    this.db.exec('SAVEPOINT update_settings')
+    try {
+      if (bytes === null) this.db.prepare('DELETE FROM background_image WHERE id = 1').run()
+      else if (bytes !== undefined) this.db.prepare(
+        'INSERT INTO background_image (id, bytes) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET bytes = excluded.bytes'
+      ).run(bytes)
+      for (const [k, v] of Object.entries(patch)) if (Object.hasOwn(DEFAULT_SETTINGS, k) && v !== undefined) upsert.run(k, JSON.stringify(v))
+      this.db.exec('RELEASE update_settings')
+    } catch (e) {
+      this.db.exec('ROLLBACK TO update_settings; RELEASE update_settings')
+      throw e
+    }
     return this.getSettings()
   }
+}
+
+function decodeBackgroundImage(image: string): Buffer {
+  const maxLength = BACKGROUND_IMAGE_PREFIX.length + 4 * Math.ceil(MAX_BACKGROUND_IMAGE_BYTES / 3)
+  if (typeof image !== 'string' || !image.startsWith(BACKGROUND_IMAGE_PREFIX) || image.length > maxLength) {
+    throw new Error('背景图片格式不对或文件过大')
+  }
+  const base64 = image.slice(BACKGROUND_IMAGE_PREFIX.length)
+  const bytes = Buffer.from(base64, 'base64')
+  if (
+    bytes.length < 20 || bytes.length > MAX_BACKGROUND_IMAGE_BYTES || bytes.toString('base64') !== base64 ||
+    bytes.toString('latin1', 0, 4) !== 'RIFF' || bytes.readUInt32LE(4) !== bytes.length - 8 ||
+    bytes.toString('latin1', 8, 12) !== 'WEBP' || !['VP8 ', 'VP8L', 'VP8X'].includes(bytes.toString('latin1', 12, 16))
+  ) throw new Error('背景图片格式不对或文件过大')
+  return bytes
 }
