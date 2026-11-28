@@ -4,6 +4,7 @@ import type { TimeRepo } from './db/timeRepo'
 import { nextClock, sleepWindow } from './db/timeRepo'
 import { BLOCK_END_GRACE_MS, blockEndDue, blockEndKey, rememberDismissal } from './reminderDismissals'
 import { dayOf, dayRange } from '@shared/time'
+import { countsTowardPlan, isReservedBlock } from '@shared/plan'
 
 /**
  * 提醒规则（纯逻辑，不碰窗口）。
@@ -125,7 +126,7 @@ export function candidates(s: Snapshot): Candidate[] {
   if (cfg.blockReminders) {
     for (const b of s.blocks) {
       // 上课时段由课表生成，上课时不需要软件来催
-      if (b.courseId) continue
+      if (!countsTowardPlan(b)) continue
       const start = new Date(b.startAt)
       const end = new Date(b.endAt)
       const isCurrentWork = running && (running.planBlockId === b.id || (b.taskId && running.taskId === b.taskId))
@@ -145,7 +146,7 @@ export function candidates(s: Snapshot): Candidate[] {
       }
 
       // 正在计时的保留时段只用本次到点提醒（目标可能已延长）
-      if (!b.taskId && !isCurrentWork && blockEndDue(end, now)) {
+      if (isReservedBlock(b) && !isCurrentWork && blockEndDue(end, now)) {
         out.push({
           key: blockEndKey(b.id, b.endAt),
           group: `block-end:${b.id}`,

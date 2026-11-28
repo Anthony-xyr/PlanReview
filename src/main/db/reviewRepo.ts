@@ -8,6 +8,7 @@ import type {
   Task
 } from '@shared/types'
 import { dateKey, dayOf, dayRange, overlapMin, shiftDay } from '@shared/time'
+import { countsTowardPlan, matchesBlockEntry } from '@shared/plan'
 import type { Repo } from './repo'
 import type { TimeRepo } from './timeRepo'
 
@@ -94,11 +95,7 @@ export class ReviewRepo {
   /** 随机推送的候选：没截止、没设下次查看、今天之后也没排进计划的未完成事项 */
   private pickCandidates(day: string): { task: Task; idleDays: number }[] {
     const { start } = dayRange(day, this.time.getSettings().dayStartHour)
-    const planned = new Set(
-      (this.db.prepare('SELECT DISTINCT task_id FROM plan_blocks WHERE task_id IS NOT NULL AND end_at > ?').all(start.toISOString()) as {
-        task_id: string
-      }[]).map((r) => r.task_id)
-    )
+    const planned = this.time.scheduledTaskIdsAfter(start.toISOString())
     const lastTouched = new Map(
       (this.db
         .prepare(
@@ -218,10 +215,9 @@ export class ReviewRepo {
   private hasActivity(day: string): boolean {
     const { start, end } = dayRange(day, this.time.getSettings().dayStartHour)
     const [s, e] = [start.toISOString(), end.toISOString()]
-    const q = (sql: string) => !!this.db.prepare(sql).get(e, s)
     return (
-      q('SELECT 1 FROM plan_blocks WHERE course_id IS NULL AND start_at < ? AND end_at > ? LIMIT 1') ||
-      q('SELECT 1 FROM time_entries WHERE start_at < ? AND COALESCE(end_at, start_at) > ? LIMIT 1')
+      this.time.hasPlannedWork(s, e) ||
+      !!this.db.prepare('SELECT 1 FROM time_entries WHERE start_at < ? AND COALESCE(end_at, start_at) > ? LIMIT 1').get(e, s)
     )
   }
 
@@ -247,23 +243,17 @@ export class ReviewRepo {
     for (const b of blocks) bucket(b.categoryId).plannedMin += minOf(b.startAt, b.endAt)
     for (const en of entries) bucket(en.categoryId).actualMin += minOf(en.startAt, en.endAt)
 
-    // 记录和计划算「对得上」：从这个计划块开始计时，或同一任务，或同名的保留时段
-    type Block = (typeof blocks)[number]
-    type Entry = (typeof entries)[number]
-    const matches = (b: Block, en: Entry) =>
-      en.planBlockId === b.id || (b.taskId ? en.taskId === b.taskId : !en.taskId && en.title === b.title)
-
     // 已经过去、没完成、当天一点都没做的计划（上课时段不算）
     const skipped = blocks.filter(
-      (b) => !b.courseId && new Date(b.endAt).getTime() <= nowMs && b.taskStatus !== 'done' && !entries.some((en) => matches(b, en))
+      (b) => countsTowardPlan(b) && new Date(b.endAt).getTime() <= nowMs && b.taskStatus !== 'done' && !entries.some((en) => matchesBlockEntry(b, en))
     )
     // 已结束、对不上任何计划的记录
-    const unplanned = entries.filter((en) => en.endAt && !blocks.some((b) => matches(b, en)))
+    const unplanned = entries.filter((en) => en.endAt && !blocks.some((b) => matchesBlockEntry(b, en)))
     // 计时的记录有本次原定时长；补录的没有，就和对应的计划块比
     const ratio = this.time.getSettings().overrunAskRatio
     const needReason = entries.flatMap((en) => {
       if (!en.endAt || en.overrunReason) return []
-      const block = en.plannedMin ? null : blocks.find((b) => matches(b, en))
+      const block = en.plannedMin ? null : blocks.find((b) => matchesBlockEntry(b, en))
       const planned = en.plannedMin ?? (block ? minOf(block.startAt, block.endAt) : 0)
       const actual = (new Date(en.endAt).getTime() - new Date(en.startAt).getTime()) / 60_000
       return planned > 0 && actual > planned * (1 + ratio) ? [{ entry: en, plannedMin: Math.round(planned) }] : []

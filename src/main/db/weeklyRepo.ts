@@ -13,6 +13,7 @@ import type {
   WeekStats
 } from '@shared/types'
 import { dayOf, dayRange, overlapMin, shiftDay } from '@shared/time'
+import { matchesBlockEntry } from '@shared/plan'
 import type { Repo } from './repo'
 import type { TimeRepo } from './timeRepo'
 import { nextClock } from './timeRepo'
@@ -91,7 +92,7 @@ export class WeeklyRepo {
     const nowMs = this.now().getTime()
     const weekFrom = dayRange(weekStart, cfg.dayStartHour).start
     const weekTo = dayRange(shiftDay(weekStart, 6), cfg.dayStartHour).end
-    const blocks = this.time.listBlocks(weekFrom.toISOString(), weekTo.toISOString()).filter((b) => !b.courseId)
+    const blocks = this.time.listWorkBlocks(weekFrom.toISOString(), weekTo.toISOString())
     const entries = this.time.listEntries(weekFrom.toISOString(), weekTo.toISOString())
     const endMs = (iso: string | null) => (iso ? new Date(iso).getTime() : nowMs)
     const moods = new Map(
@@ -152,7 +153,7 @@ export class WeeklyRepo {
       if (bs >= nowMs) continue // 还没到的计划不算
       const len = (Math.min(be, nowMs) - bs) / 60_000
       plannedTotal += len
-      const matched = entries.filter((en) => en.planBlockId === b.id || (b.taskId ? en.taskId === b.taskId : !en.taskId && en.title === b.title))
+      const matched = entries.filter((en) => matchesBlockEntry(b, en))
       fulfilled += Math.min(len, matched.reduce((sum, en) => sum + overlapMs(new Date(en.startAt).getTime(), endMs(en.endAt), bs, be), 0))
     }
 
@@ -167,7 +168,7 @@ export class WeeklyRepo {
     const reasonMap = new Map<OverrunReason | 'none', { count: number; minutes: number }>()
     for (const en of entries) {
       if (!en.endAt) continue
-      const block = en.plannedMin ? null : blocks.find((b) => en.planBlockId === b.id || (b.taskId ? en.taskId === b.taskId : !en.taskId && en.title === b.title))
+      const block = en.plannedMin ? null : blocks.find((b) => matchesBlockEntry(b, en))
       const planned = en.plannedMin ?? (block ? (new Date(block.endAt).getTime() - new Date(block.startAt).getTime()) / 60_000 : 0)
       const actual = (new Date(en.endAt).getTime() - new Date(en.startAt).getTime()) / 60_000
       if (!(planned > 0 && actual > planned * (1 + cfg.overrunAskRatio))) continue
@@ -203,15 +204,15 @@ export class WeeklyRepo {
    */
   activeWeeks(): string[] {
     const cfg = this.time.getSettings()
-    const isos = this.db
+    const otherIsos = this.db
       .prepare(
-        `SELECT start_at AS t FROM plan_blocks WHERE course_id IS NULL
-         UNION SELECT start_at FROM time_entries
+        `SELECT start_at AS t FROM time_entries
          UNION SELECT completed_at FROM tasks WHERE status = 'done' AND completed_at IS NOT NULL
          UNION SELECT created_at FROM tasks`
       )
       .all() as { t: string }[]
-    const weeks = new Set(isos.map((r) => mondayOf(dayOf(new Date(r.t), cfg.dayStartHour))))
+    const isos = [...this.time.workBlockStartTimes(), ...otherIsos.map((r) => r.t)]
+    const weeks = new Set(isos.map((t) => mondayOf(dayOf(new Date(t), cfg.dayStartHour))))
     for (const r of this.db.prepare('SELECT week_start FROM weekly_reviews WHERE report IS NOT NULL').all() as { week_start: string }[]) weeks.add(r.week_start)
     return [...weeks].sort()
   }

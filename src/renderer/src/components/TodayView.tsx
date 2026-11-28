@@ -2,6 +2,7 @@ import { useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState }
 import type { Category, PlanBlock, Settings, StartTimerInput, Task, TimeEntry } from '@shared/types'
 import type { Mutate } from '../ui'
 import { formatMinutes } from '@shared/format'
+import { isCourseBlock } from '@shared/plan'
 import {
   addMinutes,
   clamp,
@@ -288,7 +289,7 @@ export function TodayView({ settings, categories, version, mutate, running, onSt
   const renderColumn = (kind: Kind) => {
     const items =
       kind === 'plan'
-        ? blocks.map((b) => ({ id: b.id, title: b.title, cat: b.categoryId, s: minutesFrom(dayStart, b.startAt), e: minutesFrom(dayStart, b.endAt), done: b.taskStatus === 'done', live: false, taskId: b.taskId, course: !!b.courseId, loc: b.location }))
+        ? blocks.map((b) => ({ id: b.id, title: b.title, cat: b.categoryId, s: minutesFrom(dayStart, b.startAt), e: minutesFrom(dayStart, b.endAt), done: b.taskStatus === 'done', live: false, taskId: b.taskId, course: isCourseBlock(b), loc: b.location }))
         : entries.map((en) => ({ id: en.id, title: en.title, cat: en.categoryId, s: minutesFrom(dayStart, en.startAt), e: en.endAt ? minutesFrom(dayStart, en.endAt) : nowMin, done: false, live: !en.endAt, taskId: en.taskId, course: false, loc: '' }))
 
     const itemDrag = drag && drag.op !== 'create' && drag.kind === kind && drag.moved ? drag : null
