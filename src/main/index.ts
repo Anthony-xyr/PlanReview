@@ -69,13 +69,14 @@ function openDatabase() {
   const review = new ReviewRepo(db, repo, time)
   const weekly = new WeeklyRepo(db, repo, time)
   const habits = new HabitRepo(db)
+  const plannerHabits = new HabitRepo(db, 'planner')
   const aiConfig = new AiConfigStore(db, {
     available: () => safeStorage.isEncryptionAvailable(),
     encrypt: (s) => safeStorage.encryptString(s).toString('base64'),
     decrypt: (s) => safeStorage.decryptString(Buffer.from(s, 'base64'))
   })
-  const ai = new AiService({ repo, time, review, weekly, habits, aiConfig })
-  return { db, repo, time, courses, review, weekly, habits, aiConfig, ai }
+  const ai = new AiService({ db, repo, time, review, weekly, habits, plannerHabits, aiConfig })
+  return { db, repo, time, courses, review, weekly, habits, plannerHabits, aiConfig, ai }
 }
 
 function updateTray(): void {

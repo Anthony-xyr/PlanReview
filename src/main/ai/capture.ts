@@ -10,7 +10,7 @@ function localDate(d: Date): string {
 }
 
 /** 给模型看的习惯编号：h1、h2…，比 UUID 短，也不会被抄错 */
-const habitKey = (i: number) => `h${i + 1}`
+export const habitKey = (i: number) => `h${i + 1}`
 
 function fieldRules(categories: Category[], tags: string[]): string {
   const cats = categories.filter((c) => !c.archived).map((c) => c.name)
@@ -129,7 +129,7 @@ export function sanitizeCapture(raw: unknown, original: string, categories: Cate
 }
 
 /** 把模型给的习惯编号换回 id；编号不认识的丢掉 */
-function habitId(key: unknown, habits: CaptureHabit[]): string | null {
+export function habitId(key: unknown, habits: CaptureHabit[]): string | null {
   const m = typeof key === 'string' ? key.trim().match(/^h(\d+)$/i) : null
   const h = m ? habits[Number(m[1]) - 1] : undefined
   return h?.id ?? null
