@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { makeCaptureDraft } from '@shared/testFactories'
 import { migrate } from '../db/schema'
 import { Repo } from '../db/repo'
 import { TimeRepo } from '../db/timeRepo'
@@ -94,7 +95,7 @@ describe('capture', () => {
 })
 
 describe('capture habits', () => {
-  const draft = { title: '数电作业', categoryId: null, tags: [], estimateMin: null, dueDate: '2026-10-16', reviewDate: null, notes: '' }
+  const draft = makeCaptureDraft({ title: '数电作业', dueDate: '2026-10-16' })
   /** 假接口：记下请求，按顺序回放回复 */
   const fakeFetch = (...replies: unknown[]) => {
     const bodies: { messages: { content: string }[]; reasoning_effort?: string }[] = []

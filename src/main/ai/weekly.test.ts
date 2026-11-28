@@ -1,39 +1,32 @@
 import { describe, expect, it } from 'vitest'
-import type { PlanBlock, Task, WeekStats } from '@shared/types'
+import type { PlanBlock, Task } from '@shared/types'
+import { makeCategory, makePlanBlock, makeTask, makeWeekDay, makeWeekStats } from '@shared/testFactories'
 import { DEFAULT_SETTINGS } from '../db/timeRepo'
 import { sanitizeAction, sanitizeWeekly, weekContextText } from './weekly'
 import { freeGaps, sanitizePlan, type PlannerContext } from './planner'
 
-const task = (id: string, over: Partial<Task> = {}): Task => ({
-  id,
-  title: `任务${id}`,
-  notes: '',
-  status: 'active',
-  categoryId: null,
-  tags: [],
-  estimateMin: 120,
-  nextStep: '',
-  sourceTaskId: null,
-  dueDate: null,
-  reviewDate: null,
-  createdAt: '',
-  updatedAt: '',
-  completedAt: null,
-  spentMin: 30,
-  ...over
-})
+const task = (id: string, over: Partial<Task> = {}): Task =>
+  makeTask({
+    id,
+    title: `任务${id}`,
+    estimateMin: 120,
+    createdAt: '',
+    updatedAt: '',
+    spentMin: 30,
+    ...over
+  })
 
-const stats: WeekStats = {
+const stats = makeWeekStats({
   weekStart: '2026-10-12',
-  days: Array.from({ length: 7 }, (_, i) => ({
-    day: `2026-10-${12 + i}`,
-    plannedMin: 120,
-    actualMin: 90,
-    byCategory: { c1: 90 },
-    sleepWindowMin: i === 1 ? 60 : 0,
-    lastEndAt: null,
-    mood: null
-  })),
+  days: Array.from({ length: 7 }, (_, i) =>
+    makeWeekDay({
+      day: `2026-10-${12 + i}`,
+      plannedMin: 120,
+      actualMin: 90,
+      byCategory: { c1: 90 },
+      sleepWindowMin: i === 1 ? 60 : 0
+    })
+  ),
   plannedMin: 840,
   actualMin: 630,
   fulfilment: 0.6,
@@ -44,14 +37,14 @@ const stats: WeekStats = {
   created: 5,
   spinOffs: 1,
   reviewedDays: 4
-}
+})
 
 describe('weekly context', () => {
   it('包含合计、每天、估时、原因、复盘和画像', () => {
     const text = weekContextText({
       stats,
       notes: [{ day: '2026-10-13', mood: 2, note: '晚上打游戏停不下来' }],
-      categories: [{ id: 'c1', name: '学习', color: '#000', sort: 0, archived: false }],
+      categories: [makeCategory({ id: 'c1', name: '学习', color: '#000' })],
       settings: DEFAULT_SETTINGS,
       openTasks: [task('t9')],
       insights: ['编程类估时偏低']
@@ -104,7 +97,8 @@ describe('sanitize weekly', () => {
 
 describe('planner', () => {
   const at = (h: number, m = 0) => new Date(2026, 9, 16, h, m)
-  const block = (s: Date, e: Date): PlanBlock => ({ id: 'b', taskId: null, title: '课', categoryId: null, taskStatus: null, startAt: s.toISOString(), endAt: e.toISOString(), courseId: null, location: '' })
+  const block = (s: Date, e: Date): PlanBlock =>
+    makePlanBlock({ id: 'b', title: '课', startAt: s.toISOString(), endAt: e.toISOString() })
 
   it('空档：扣掉已有计划、对齐 5 分钟、丢掉碎片', () => {
     const gaps = freeGaps(at(13, 2), at(18), [block(at(14), at(15, 50)), block(at(16), at(17))])
