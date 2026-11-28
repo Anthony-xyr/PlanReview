@@ -21,6 +21,7 @@ export interface AppIpcDeps extends SystemIpcDeps {
   review: ReviewRepo
   weekly: WeeklyRepo
   habits: HabitRepo
+  plannerHabits: HabitRepo
   aiConfig: AiConfigStore
   ai: AiService
   guards: IpcRegistryGuards

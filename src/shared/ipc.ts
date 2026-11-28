@@ -100,6 +100,7 @@ export const IPC_MANIFEST = {
   },
   planner: {
     suggest: 'read',
+    replan: 'read',
     accept: 'write'
   },
   reminders: {
