@@ -333,20 +333,21 @@ function registerIpc(): void {
       platform: isWindows ? 'win32' : isMac ? 'darwin' : 'linux'
     })
   }
-  const floatSurface = (sender: Electron.WebContents): BrowserWindow | null =>
-    [floatWin, floatOverlay].find((w) => !!w && !w.isDestroyed() && w.webContents === sender) ?? null
+  const floatSurface = (e: Electron.IpcMainInvokeEvent): BrowserWindow => {
+    const win = [floatWin, floatOverlay].find((w) => !!w && !w.isDestroyed() && w.webContents === e.sender)
+    if (!win || !e.senderFrame || e.senderFrame !== e.sender.mainFrame) throw new Error('仅悬浮窗主帧可使用此通道')
+    return win
+  }
 
   ipcMain.handle('win:floatReady', (e) => {
-    if (e.senderFrame !== e.sender.mainFrame) return
-    if (e.sender === floatOverlay?.webContents) overlayBridgeReady = true
-    else if (e.sender === floatWin?.webContents) floatBridgeReady = true
-    else throw new Error('仅悬浮窗可使用此通道')
+    const win = floatSurface(e)
+    if (win === floatOverlay) overlayBridgeReady = true
+    else floatBridgeReady = true
     focusCapture()
   })
   ipcMain.handle('win:resizeFloat', (e, height: number) => {
-    if (e.senderFrame !== e.sender.mainFrame) return
-    const win = floatSurface(e.sender)
-    if (!win || !Number.isFinite(height)) return
+    const win = floatSurface(e)
+    if (!Number.isFinite(height)) return
     const [w] = win.getSize()
     const h = Math.max(60, Math.min(600, Math.round(height)))
     const b = win.getBounds()
@@ -573,10 +574,7 @@ function createFloatWindow(): void {
   floatWin = win
   win.setAlwaysOnTop(true, 'floating')
   win.webContents.on('did-start-loading', () => { floatBridgeReady = false })
-  win.webContents.once('render-process-gone', () => {
-    overlayFailed = true
-    win.destroy()
-  })
+  win.webContents.once('render-process-gone', () => win.destroy())
   win.once('closed', () => {
     floatWin = null
     floatReady = false
@@ -626,7 +624,14 @@ function createFloatOverlay(): void {
   win.setAlwaysOnTop(true, 'screen-saver')
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true })
   win.webContents.on('did-start-loading', () => { overlayBridgeReady = false })
-  win.webContents.once('render-process-gone', () => win.destroy())
+  const fallBack = () => {
+    // 过期加载回调不得影响后续新建的覆盖层或用户已经隐藏的窗口。
+    if (floatOverlay !== win || win.isDestroyed()) return
+    overlayFailed = true
+    win.destroy()
+    updateDesktopVisibility()
+  }
+  win.webContents.once('render-process-gone', fallBack)
   win.once('closed', () => {
     if (floatOverlay !== win) return
     floatOverlay = null
@@ -634,17 +639,15 @@ function createFloatOverlay(): void {
     overlayBridgeReady = false
   })
   win.once('ready-to-show', () => {
+    if (floatOverlay !== win || win.isDestroyed()) return
     overlayReady = true
-    win.showInactive()
-    focusCapture()
+    // 加载期间可能已经隐藏或切换任务，重新判断可见性，避免迟到的回调弹出第二张卡片。
+    updateDesktopVisibility()
   })
   void loadRenderer(win, '#float').catch((err: unknown) => {
-    overlayFailed = true
-    if (!win.isDestroyed()) {
-      console.error('Failed to load the fullscreen float overlay', err)
-      win.destroy()
-    }
-    if (floatWin && floatReady && !floatWin.isDestroyed() && !floatWin.isVisible() && floatIntent !== 'hide') floatWin.showInactive()
+    if (floatOverlay !== win || win.isDestroyed()) return
+    console.error('Failed to load the fullscreen float overlay', err)
+    fallBack()
   })
 }
 
