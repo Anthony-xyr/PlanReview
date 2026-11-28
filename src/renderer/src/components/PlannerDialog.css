@@ -3,3 +3,7 @@
 .plan-time { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 92px; }
 .plan-title .badge { margin-left: 6px; }
 .plan-list .sug-evidence { margin-left: 24px; }
+
+/* 来自排程习惯快照：重排时锁定草稿，保留当前选择。 */
+.plan-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.plan-fields:disabled { opacity: .55; }
