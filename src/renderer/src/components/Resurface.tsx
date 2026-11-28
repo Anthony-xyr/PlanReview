@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Category, Resurface, ResurfaceAction, StartTimerInput, Task } from '@shared/types'
 import type { Mutate } from '../ui'
 import { shiftDay } from '@shared/time'
+import './Resurface.css'
 
 interface Props {
   day: string

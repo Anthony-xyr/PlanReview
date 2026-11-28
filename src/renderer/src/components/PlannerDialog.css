@@ -1,0 +1,5 @@
+.plan-list { list-style: none; padding: 0; margin: 0 0 8px; display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow-y: auto; }
+.plan-list .check { align-items: baseline; }
+.plan-time { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 92px; }
+.plan-title .badge { margin-left: 6px; }
+.plan-list .sug-evidence { margin-left: 24px; }

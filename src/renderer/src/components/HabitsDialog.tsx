@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { CaptureHabit } from '@shared/types'
 import { MAX_HABIT_CHARS, MAX_HABITS } from '@shared/types'
 import { Dialog, errorText } from '../ui'
+import './HabitsDialog.css'
 
 const when = (iso: string) => new Date(iso).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
 

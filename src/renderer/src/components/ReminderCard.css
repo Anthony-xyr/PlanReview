@@ -1,0 +1,14 @@
+.reminder-host { padding: 10px 18px 0; }
+.reminder {
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line)); background: var(--accent-soft); border-radius: 10px; padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.reminder.is-strong { border-color: color-mix(in srgb, var(--sleep) 45%, var(--line)); background: color-mix(in srgb, var(--sleep) 12%, var(--panel)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--sleep) 15%, transparent); }
+.reminder-title { font-weight: 600; font-size: 15px; }
+.reminder-body { color: var(--text); line-height: 1.5; }
+.reminder-impact { margin: 0; padding-left: 18px; color: var(--warn); font-size: 13px; line-height: 1.6; }
+.reminder-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 4px; }
+.reminder.is-compact { margin: 6px 8px 0; padding: 10px 11px; }
+.reminder.is-compact .reminder-title { font-size: 14px; }
+.reminder.is-compact button { padding: 4px 10px; font-size: 13px; }
+.reminder .inline-form { margin-top: 4px; flex-wrap: wrap; }

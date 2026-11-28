@@ -4,6 +4,7 @@ import { OVERRUN_REASONS } from '@shared/types'
 import { formatMinutes } from '@shared/format'
 import { hhmm, shiftDay } from '@shared/time'
 import { Dialog, type Mutate } from '../ui'
+import './DailyReviewDialog.css'
 
 interface Props {
   /** 复盘哪一天 */

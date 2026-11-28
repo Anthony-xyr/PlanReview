@@ -1,9 +1,9 @@
+import './styles.css'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App'
 import { FloatApp } from './float/FloatApp'
 import { TimerOverlay } from './timer/TimerOverlay'
-import './styles.css'
 
 const route = location.hash
 document.documentElement.classList.toggle('is-float', route === '#float')

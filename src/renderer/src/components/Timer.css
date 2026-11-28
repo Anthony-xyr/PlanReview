@@ -1,0 +1,10 @@
+.timerbar {
+  display: flex; align-items: center; gap: 10px; padding: 8px 18px;
+  background: var(--ok-soft); border-bottom: 1px solid var(--ok-line); color: var(--ok);
+}
+.timerbar.is-over { background: var(--warn-soft); border-color: var(--warn-line); color: var(--warn); }
+.timerbar.is-over .pulse { background: var(--warn); }
+.timer-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.timer-left { font-size: 12px; opacity: .85; }
+.timerbar button.secondary { padding: 4px 10px; }
+.choice-row { display: flex; gap: 8px; flex-wrap: wrap; }

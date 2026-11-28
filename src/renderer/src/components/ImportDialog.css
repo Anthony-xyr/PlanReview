@@ -1,0 +1,18 @@
+.dropzone { border: 2px dashed var(--line); border-radius: 10px; padding: 18px; display: flex; align-items: center; justify-content: center; gap: 12px; margin: 10px 0; }
+.file-list { list-style: none; padding: 0; margin: 0 0 10px; }
+.file-list li { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--line-soft); }
+.file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.field.inline { flex-direction: row; align-items: center; gap: 10px; }
+.field.inline input { width: auto; }
+.preview-scroll { max-height: 46vh; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.preview { width: 100%; border-collapse: collapse; font-size: 13px; }
+.preview th { position: sticky; top: 0; background: var(--sunken); text-align: left; font-weight: 500; color: var(--muted); padding: 6px 8px; }
+.preview td { padding: 3px 6px; border-top: 1px solid var(--line-soft); }
+.preview input, .preview select { padding: 3px 6px; font-size: 13px; }
+.preview input[type='time'] { width: 92px; }
+.preview .weeks { width: 110px; }
+.preview .nowrap { white-space: nowrap; }
+.dialog:has(.import) { width: 900px; max-height: 88vh; }
+.import-date-warning { margin: 10px 0; border-left: 4px solid var(--warn); }
+.import-date-warning strong { display: block; margin-bottom: 4px; }
+.import-confirm-date { padding: 8px 10px; margin: 10px 0; border-radius: 6px; background: var(--warn-soft); }

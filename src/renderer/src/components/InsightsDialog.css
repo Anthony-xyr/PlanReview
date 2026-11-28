@@ -1,0 +1,4 @@
+.insights { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow-y: auto; }
+.ins { border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; }
+.ins.is-rejected { opacity: 0.55; }
+.ins-text { font-size: 13px; line-height: 1.5; }
