@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { PlanBlock, Task } from '@shared/types'
+import { makePlanBlock, makeTask } from '@shared/testFactories'
 import { matchesPickerQuery, planTimerInput, selectFloatWork } from './floatWork'
 
 const at = (time: string) => `2026-11-23T${time}:00.000Z`
-const task = (id: string, status: Task['status'] = 'active'): Task => ({ id, status } as Task)
-const block = (id: string, startAt: string, endAt: string, fields: Partial<PlanBlock> = {}): PlanBlock => ({
-  id, startAt: at(startAt), endAt: at(endAt), title: id, location: '', taskId: null, courseId: null, categoryId: null, taskStatus: null, ...fields
-})
+const task = (id: string, status: Task['status'] = 'active'): Task => makeTask({ id, status })
+const block = (id: string, startAt: string, endAt: string, fields: Partial<PlanBlock> = {}): PlanBlock =>
+  makePlanBlock({ id, title: id, startAt: at(startAt), endAt: at(endAt), ...fields })
 
 describe('悬浮窗任务选择', () => {
   it('按整天判定待安排：过去时段也计入，收件箱、已结束事项不列出', () => {

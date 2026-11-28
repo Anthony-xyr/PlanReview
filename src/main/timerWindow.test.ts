@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, expect, it, vi } from 'vitest'
-import type { TimeEntry } from '@shared/types'
+import { makeTimeEntry } from '@shared/testFactories'
 import { TimerWindow } from './timerWindow'
 import { MacWorkspaces } from './macWorkspaces'
 
@@ -36,10 +36,11 @@ vi.mock('electron', () => {
   }
 })
 
-const entry: TimeEntry = {
-  id: 'entry', title: 'Item', startAt: '2026-11-02T00:00:00.000Z', targetEndAt: null, endAt: null,
-  source: 'timer', note: '', taskId: null, planBlockId: null, categoryId: null, plannedMin: null, extendedMin: 0, overrunReason: null
-}
+const entry = makeTimeEntry({
+  id: 'entry',
+  title: 'Item',
+  startAt: '2026-11-02T00:00:00.000Z'
+})
 
 const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
 
