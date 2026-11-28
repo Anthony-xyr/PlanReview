@@ -88,6 +88,7 @@ export function BackgroundSettings({ mode, fit, opacity, image, disabled, pickin
       {mode === 'time' && <small className="muted">按本机时间切换：{scheduleHint}</small>}
       {mode === 'custom' && (
         <>
+          {!image && <small className="muted" role="status">请先选择一张背景图片，再保存自定义背景。</small>}
           <div className="background-file-actions">
             <input ref={fileInput} type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" hidden onChange={pickImage} />
             <button type="button" className="secondary" disabled={disabled || picking} onClick={() => fileInput.current?.click()}>

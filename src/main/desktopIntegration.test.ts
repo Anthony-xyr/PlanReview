@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { app, globalShortcut } from 'electron'
+import { app, globalShortcut, powerMonitor } from 'electron'
 
 // 运行真实主进程入口和真实隔离数据库；只替换 Electron 窗口/系统边界，不会连接用户数据目录。
 const state = vi.hoisted(() => ({
@@ -115,6 +115,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   app.emit('will-quit')
+  expect(powerMonitor.listenerCount('resume')).toBe(0)
   for (const win of state.windows) win.destroy()
   for (const db of state.databases) db.close()
   // 只删除本测试创建的临时子目录，先核实解析后的路径仍在系统临时目录内。
@@ -242,5 +243,12 @@ describe('真实主进程的悬浮窗与覆盖层协作（Electron 边界替身�
     expect(ordinary.webContents.send).toHaveBeenCalledWith('focus-capture')
     expect(ordinary.setIgnoreMouseEvents).not.toHaveBeenCalledWith(true)
   })
-
+  it('系统恢复只通知主窗口刷新背景，退出后释放监听器', async () => {
+    await boot('win32')
+    for (const win of state.windows) vi.mocked(win.webContents.send).mockClear()
+    expect(powerMonitor.listenerCount('resume')).toBe(1)
+    powerMonitor.emit('resume')
+    expect(main().webContents.send).toHaveBeenCalledWith('system-resume')
+    expect(float().webContents.send).not.toHaveBeenCalledWith('system-resume')
+  })
 })
