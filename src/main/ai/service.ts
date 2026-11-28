@@ -1,4 +1,5 @@
-import type { CaptureDraft, ImportFile, SuggestedBlock } from '@shared/types'
+import type { DatabaseSync } from 'node:sqlite'
+import type { CaptureDraft, ImportFile, PlanAcceptance, SuggestedBlock } from '@shared/types'
 import { dayRange } from '@shared/time'
 import type { Repo } from '../db/repo'
 import { sleepWindow, type TimeRepo } from '../db/timeRepo'
@@ -10,14 +11,16 @@ import { chat } from './client'
 import { parseCapture, reparseCapture } from './capture'
 import { parseSchedule } from './schedule'
 import { askWeekly, generateWeekly, weekContextText, type WeekContext } from './weekly'
-import { freeGaps, suggestPlan } from './planner'
+import { freeGaps, normalizePlanFeedback, normalizePreviousPlan, replanDay, suggestPlan, type PlannerContext } from './planner'
 
 export interface AiServiceDeps {
+  db: DatabaseSync
   repo: Repo
   time: TimeRepo
   review: ReviewRepo
   weekly: WeeklyRepo
   habits: HabitRepo
+  plannerHabits: HabitRepo
   aiConfig: AiConfigStore
 }
 
@@ -89,45 +92,66 @@ export class AiService {
     return weekly.addMessage(weekStart, 'assistant', answer)
   }
 
-  async suggestDayPlan(day: string, hint: string) {
-    const { aiConfig, repo, time, weekly } = this.deps
+  private plannerContext(day: string, hint: string): { context: PlannerContext; dayStartHour: number } {
+    const { repo, time, weekly, plannerHabits } = this.deps
     const cfg = time.getSettings()
     const { start, end } = dayRange(day, cfg.dayStartHour)
     const now = new Date()
     const from = new Date(Math.max(now.getTime(), start.getTime()))
     if (from >= end) throw new Error('这一天已经过去了')
-    // 排到睡眠窗口开始为止
     const sleep = sleepWindow(from, cfg)
     const until = new Date(Math.min(end.getTime(), sleep.inside ? from.getTime() : sleep.start.getTime()))
     const blocks = time.listBlocks(start.toISOString(), end.toISOString())
     const scheduled = new Set(blocks.filter((b) => new Date(b.endAt) > now).map((b) => b.taskId))
-    return suggestPlan(
-      aiConfig.endpoint(),
-      {
-        day,
-        now: from,
-        gaps: freeGaps(from, until, blocks),
-        blocks,
+    return {
+      context: {
+        day, now: from, gaps: freeGaps(from, until, blocks), blocks,
         tasks: repo.listTasks({ status: ['inbox', 'active'] }).filter((t) => !scheduled.has(t.id)),
-        categories: repo.listCategories(),
-        insights: weekly.acceptedInsights(),
-        hint
+        categories: repo.listCategories(), insights: weekly.acceptedInsights(),
+        hint: typeof hint === 'string' ? hint : '', habits: plannerHabits.enabled()
       },
-      cfg.dayStartHour,
-      aiConfig.effort('planner')
-    )
+      dayStartHour: cfg.dayStartHour
+    }
   }
 
-  /** 写入用户勾选的建议；逐条走正常的建块校验，有一条失败就整体回滚 */
-  acceptDayPlan(blocks: SuggestedBlock[]): { created: number } {
+  async suggestDayPlan(day: string, hint: string) {
+    const { context, dayStartHour } = this.plannerContext(day, hint)
+    if (!context.gaps.length) return { day, blocks: [], notes: ['今天剩下的时间里没有空档了'], habitIds: [] }
+    return suggestPlan(this.deps.aiConfig.endpoint(), context, dayStartHour, this.deps.aiConfig.effort('planner'))
+  }
+
+  async replanDay(day: string, hint: string, previous: SuggestedBlock[], feedback: string[]) {
+    const notes = normalizePlanFeedback(feedback)
+    const draft = normalizePreviousPlan(previous)
+    const { context, dayStartHour } = this.plannerContext(day, hint)
+    if (!context.gaps.length) return { day, blocks: [], notes: ['今天剩下的时间里没有空档了'], habitIds: [], habit: '', replacesId: null }
+    return replanDay(this.deps.aiConfig.endpoint(), context, draft, notes, dayStartHour, this.deps.aiConfig.effort('planner'))
+  }
+
+  /** 用户确认后，计划、习惯与计次一起保存；任意失败都回滚，不留下半次确认。 */
+  acceptDayPlan(blocks: SuggestedBlock[], confirmation?: PlanAcceptance): { created: number } {
     if (!Array.isArray(blocks) || blocks.length > 30) throw new Error('建议格式不对')
-    const created: string[] = []
+    if (confirmation !== undefined && (!confirmation || typeof confirmation !== 'object' || Array.isArray(confirmation))) throw new Error('习惯确认格式不对')
+    const { db, time, plannerHabits } = this.deps
+    const ids = confirmation?.habitIds
+    if (ids !== undefined && (!Array.isArray(ids) || ids.length > 30 || ids.some((id) => typeof id !== 'string'))) throw new Error('习惯编号格式不对')
+    const habit = confirmation?.habit
+    if (habit && (typeof habit.text !== 'string' || (habit.example !== undefined && typeof habit.example !== 'string') ||
+        (habit.replacesId != null && typeof habit.replacesId !== 'string'))) throw new Error('习惯确认格式不对')
+    if (habit?.replacesId && !plannerHabits.get(habit.replacesId)) throw new Error('要替换的排程习惯已不存在，请重新确认')
+    db.exec('SAVEPOINT accept_plan')
     try {
-      for (const b of blocks) created.push(this.deps.time.createBlock({ taskId: b.taskId, title: b.title, startAt: b.startAt, endAt: b.endAt }).id)
+      for (const b of blocks) {
+        if (!b || typeof b !== 'object') throw new Error('建议格式不对')
+        time.createBlock({ taskId: b.taskId, title: b.title, startAt: b.startAt, endAt: b.endAt })
+      }
+      if (ids) plannerHabits.markUsed(ids)
+      if (habit) plannerHabits.add(habit.text, habit.example ?? '', habit.replacesId ?? null)
+      db.exec('RELEASE accept_plan')
+      return { created: blocks.length }
     } catch (e) {
-      for (const id of created) this.deps.time.deleteBlock(id)
+      db.exec('ROLLBACK TO accept_plan; RELEASE accept_plan')
       throw e
     }
-    return { created: created.length }
   }
 }

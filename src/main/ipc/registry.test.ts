@@ -111,6 +111,7 @@ describe('createIpcRegistry', () => {
       review: {} as never,
       weekly: {} as never,
       habits: {} as never,
+      plannerHabits: {} as never,
       aiConfig: {} as never,
       ai: {} as never,
       center: {} as never,

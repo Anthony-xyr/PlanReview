@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { AiApiFormat, AiConfigView, AiTask, ReasoningEffort } from '@shared/types'
+import type { AiApiFormat, AiConfigView, AiTask, HabitKind, ReasoningEffort } from '@shared/types'
 import { REASONING_EFFORTS } from '@shared/types'
 import { errorText } from '../ui'
 import { HabitsDialog } from './HabitsDialog'
@@ -39,9 +39,11 @@ export function AiSettings() {
   const [key, setKey] = useState('')
   const [status, setStatus] = useState<{ text: string; error?: boolean } | null>(null)
   const [busy, setBusy] = useState(false)
-  const [showHabits, setShowHabits] = useState(false)
-  const [habitCount, setHabitCount] = useState<number | null>(null)
-  const loadHabitCount = () => window.api.habits.list().then((l) => setHabitCount(l.filter((h) => h.enabled).length))
+  const [showHabits, setShowHabits] = useState<HabitKind | null>(null)
+  const [habitCount, setHabitCount] = useState<Record<HabitKind, number>>({ capture: 0, planner: 0 })
+  const loadHabitCount = () => Promise.all([window.api.habits.list('capture'), window.api.habits.list('planner')])
+    .then(([c, p]) => setHabitCount({ capture: c.filter((h) => h.enabled).length, planner: p.filter((h) => h.enabled).length }))
+    .catch((e) => setStatus({ text: errorText(e), error: true }))
 
   useEffect(() => {
     loadHabitCount()
@@ -169,11 +171,18 @@ export function AiSettings() {
           <div className="habit-entry">
             <div>
               <strong>速记习惯</strong>
-              <p className="muted">{habitCount ? `已记住 ${habitCount} 条，AI 拆速记时会照着理解你的写法` : '还没有。速记卡片上点「纠正」，确认后会记在这里'}</p>
+              <p className="muted">{habitCount.capture ? `已记住 ${habitCount.capture} 条，AI 拆速记时会照着理解你的写法` : '还没有。速记卡片上点「纠正」，确认后会记在这里'}</p>
             </div>
-            <button type="button" className="secondary" onClick={() => setShowHabits(true)}>
+            <button type="button" className="secondary" onClick={() => setShowHabits('capture')}>
               查看和修改
             </button>
+          </div>
+          <div className="habit-entry">
+            <div>
+              <strong>排程习惯</strong>
+              <p className="muted">{habitCount.planner ? `已记住 ${habitCount.planner} 条，「请 AI 排一下」时会照着排` : '还没有。可以直接添加，或在 AI 排好后点「纠正」'}</p>
+            </div>
+            <button type="button" className="secondary" onClick={() => setShowHabits('planner')}>查看和修改</button>
           </div>
           <div className="dialog-actions">
             {cfg.hasKey && (
@@ -204,8 +213,9 @@ export function AiSettings() {
       {status && <p className={status.error ? 'form-error' : 'form-ok'} role="status">{status.text}</p>}
       {showHabits && (
         <HabitsDialog
+          kind={showHabits}
           onClose={() => {
-            setShowHabits(false)
+            setShowHabits(null)
             loadHabitCount()
           }}
         />
