@@ -24,6 +24,8 @@ describe('client', () => {
   it('规范化地址', () => {
     expect(normalizeBaseUrl(' https://api.deepseek.com/v1/ ')).toBe('https://api.deepseek.com/v1')
     expect(normalizeBaseUrl('https://x.com/v1/chat/completions')).toBe('https://x.com/v1')
+    expect(normalizeBaseUrl(' https://api.anthropic.com/ ', 'anthropic')).toBe('https://api.anthropic.com')
+    expect(normalizeBaseUrl('https://api.anthropic.com/v1/messages/', 'anthropic')).toBe('https://api.anthropic.com/v1')
   })
 
   it('从各种输出里取 JSON', () => {
@@ -58,6 +60,114 @@ describe('client', () => {
     }) as unknown as typeof fetch
     expect(await chat({ baseUrl: 'https://x.com', apiKey: '', model: 'm' }, [], { json: true, fetchImpl: f })).toBe('{"x":1}')
     expect(n).toBe(2)
+  })
+
+  it('Anthropic Messages 格式：地址补全、鉴权头、system 抽离、识图与响应解析', async () => {
+    const calls: { url: string; init: RequestInit }[] = []
+    const ok = (async (url: string, init: RequestInit) => {
+      calls.push({ url, init })
+      return new Response(
+        JSON.stringify({
+          content: [
+            { type: 'thinking', thinking: 'internal' },
+            { type: 'text', text: '{"ok":' },
+            { type: 'text', text: 'true}' }
+          ]
+        }),
+        { status: 200 }
+      )
+    }) as unknown as typeof fetch
+
+    const out = await chat(
+      { baseUrl: 'https://api.anthropic.com', apiKey: 'sk-ant-1', model: 'claude-sonnet-4-5', apiFormat: 'anthropic' },
+      [
+        { role: 'system', content: 'sys1' },
+        { role: 'system', content: 'sys2' },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: '识别课表' },
+            { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA=' } }
+          ]
+        },
+        { role: 'user', content: '补充说明' }
+      ],
+      { json: true, reasoningEffort: 'high', fetchImpl: ok }
+    )
+
+    expect(out).toBe('{"ok":true}')
+    expect(calls[0].url).toBe('https://api.anthropic.com/v1/messages')
+    const headers = calls[0].init.headers as Record<string, string>
+    expect(headers['x-api-key']).toBe('sk-ant-1')
+    expect(headers['anthropic-version']).toBe('2023-06-01')
+    expect(headers.authorization).toBeUndefined()
+
+    const body = JSON.parse(calls[0].init.body as string)
+    expect(body.model).toBe('claude-sonnet-4-5')
+    expect(body.max_tokens).toBe(8192)
+    expect(body.system).toBe('sys1\n\nsys2')
+    expect(body.response_format).toBeUndefined()
+    expect(body.reasoning_effort).toBeUndefined()
+    expect(body.messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: '识别课表' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAA=' } },
+          { type: 'text', text: '补充说明' }
+        ]
+      }
+    ])
+
+    // Base URL already ending in /v1 should not duplicate /v1
+    await chat(
+      { baseUrl: 'https://proxy.example/anthropic/v1', apiKey: '', model: 'claude', apiFormat: 'anthropic' },
+      [{ role: 'user', content: 'hi' }],
+      { fetchImpl: ok }
+    )
+    expect(calls[1].url).toBe('https://proxy.example/anthropic/v1/messages')
+
+    const bad = (async () =>
+      new Response(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } }), {
+        status: 401
+      })) as unknown as typeof fetch
+    await expect(
+      chat({ baseUrl: 'https://api.anthropic.com', apiKey: 'bad', model: 'claude', apiFormat: 'anthropic' }, [{ role: 'user', content: 'hi' }], {
+        fetchImpl: bad
+      })
+    ).rejects.toThrow(/API Key/)
+  })
+
+  it('模型不支持非默认 temperature 时自动去掉后重试（Anthropic 与 OpenAI 均适用）', async () => {
+    let anthAttempts = 0
+    const anthFetch = (async (_u: string, init: RequestInit) => {
+      anthAttempts++
+      const b = JSON.parse(init.body as string)
+      if (b.temperature !== undefined) {
+        return new Response(JSON.stringify({ type: 'error', error: { message: 'claude-haiku-5-5 does not support non-default temperature' } }), {
+          status: 400
+        })
+      }
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: '好的' }] }), { status: 200 })
+    }) as unknown as typeof fetch
+    expect(
+      await chat({ baseUrl: 'https://api.anthropic.com', apiKey: 'k', model: 'claude-haiku-5-5', apiFormat: 'anthropic' }, [{ role: 'user', content: 'hi' }], {
+        fetchImpl: anthFetch
+      })
+    ).toBe('好的')
+    expect(anthAttempts).toBe(2)
+
+    let oaiAttempts = 0
+    const oaiFetch = (async (_u: string, init: RequestInit) => {
+      oaiAttempts++
+      const b = JSON.parse(init.body as string)
+      if (b.temperature !== undefined) {
+        return new Response(JSON.stringify({ error: { message: 'Unsupported value: temperature does not support 0.1' } }), { status: 400 })
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 })
+    }) as unknown as typeof fetch
+    expect(await chat({ baseUrl: 'https://api.openai.com/v1', apiKey: 'k', model: 'o3' }, [{ role: 'user', content: 'hi' }], { fetchImpl: oaiFetch })).toBe('ok')
+    expect(oaiAttempts).toBe(2)
   })
 })
 
@@ -377,13 +487,21 @@ describe('config', () => {
     expect(store.view().hasKey).toBe(false)
   })
 
-  it('识图模型、开关、地址校验', () => {
+  it('识图模型、开关、地址与接口格式校验', () => {
     const store = new AiConfigStore(db, box)
+    expect(store.view().apiFormat).toBe('openai')
     expect(() => store.endpoint()).toThrow(/没有开启/)
     store.update({ enabled: true, baseUrl: 'https://x.com', model: 'a', visionModel: 'b' })
     expect(store.endpoint(true).model).toBe('b')
     expect(store.endpoint(false).model).toBe('a')
+    expect(store.endpoint().apiFormat).toBe('openai')
     expect(store.captureEnabled()).toBe(true)
     expect(() => store.update({ baseUrl: 'ftp://x' })).toThrow()
+
+    const anth = store.update({ apiFormat: 'anthropic', baseUrl: 'https://api.anthropic.com/v1/messages/' })
+    expect(anth.apiFormat).toBe('anthropic')
+    expect(anth.baseUrl).toBe('https://api.anthropic.com/v1')
+    expect(store.endpoint().apiFormat).toBe('anthropic')
+    expect(() => store.update({ apiFormat: 'invalid' as never })).toThrow(/不支持/)
   })
 })

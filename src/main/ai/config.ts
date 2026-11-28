@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
-import type { AiConfigPatch, AiConfigView, AiTask, ReasoningEffort } from '@shared/types'
-import { REASONING_EFFORTS } from '@shared/types'
+import type { AiApiFormat, AiConfigPatch, AiConfigView, AiTask, ReasoningEffort } from '@shared/types'
+import { AI_API_FORMATS, REASONING_EFFORTS } from '@shared/types'
 import type { AiEndpoint } from './client'
 import { normalizeBaseUrl } from './client'
 
@@ -15,6 +15,7 @@ const KEY = 'ai.config'
 
 interface Stored {
   enabled: boolean
+  apiFormat: AiApiFormat
   baseUrl: string
   model: string
   visionModel: string
@@ -26,9 +27,11 @@ interface Stored {
 }
 
 const isEffort = (v: unknown): v is ReasoningEffort => REASONING_EFFORTS.includes(v as ReasoningEffort)
+const isApiFormat = (v: unknown): v is AiApiFormat => AI_API_FORMATS.includes(v as AiApiFormat)
 
 const DEFAULTS: Stored = {
   enabled: false,
+  apiFormat: 'openai',
   baseUrl: '',
   model: '',
   visionModel: '',
@@ -58,7 +61,12 @@ export class AiConfigStore {
     const effort = { ...DEFAULTS.reasoningEffort }
     if (saved.reasoningEffort && typeof saved.reasoningEffort === 'object')
       for (const [k, v] of Object.entries(saved.reasoningEffort)) if (k in effort && isEffort(v)) effort[k as AiTask] = v
-    return { ...DEFAULTS, ...saved, reasoningEffort: effort }
+    return {
+      ...DEFAULTS,
+      ...saved,
+      apiFormat: isApiFormat(saved.apiFormat) ? saved.apiFormat : DEFAULTS.apiFormat,
+      reasoningEffort: effort
+    }
   }
 
   /** 某个场景该用的推理强度 */
@@ -76,6 +84,7 @@ export class AiConfigStore {
     const s = this.load()
     return {
       enabled: s.enabled,
+      apiFormat: s.apiFormat,
       baseUrl: s.baseUrl,
       model: s.model,
       visionModel: s.visionModel,
@@ -88,8 +97,12 @@ export class AiConfigStore {
 
   update(patch: AiConfigPatch): AiConfigView {
     const s = this.load()
+    if (patch.apiFormat !== undefined) {
+      if (!isApiFormat(patch.apiFormat)) throw new Error('不支持的 AI 接口格式')
+      s.apiFormat = patch.apiFormat
+    }
     if (patch.baseUrl !== undefined) {
-      const url = normalizeBaseUrl(patch.baseUrl)
+      const url = normalizeBaseUrl(patch.baseUrl, s.apiFormat)
       if (url && !/^https?:\/\/[^\s/]+/i.test(url)) throw new Error('接口地址应以 http:// 或 https:// 开头')
       s.baseUrl = url
     }
@@ -121,7 +134,7 @@ export class AiConfigStore {
     const s = this.load()
     if (!s.enabled) throw new Error('AI 功能还没有开启，请到设置里配置')
     const apiKey = s.apiKey ? (s.keyEncrypted ? this.box.decrypt(s.apiKey) : s.apiKey) : ''
-    return { baseUrl: s.baseUrl, apiKey, model: (vision && s.visionModel) || s.model }
+    return { baseUrl: s.baseUrl, apiKey, model: (vision && s.visionModel) || s.model, apiFormat: s.apiFormat }
   }
 
   captureEnabled(): boolean {
