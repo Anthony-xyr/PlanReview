@@ -7,9 +7,14 @@ export const REASONING_EFFORTS: ReasoningEffort[] = ['low', 'medium', 'high']
 /** 用到 AI 的场景 */
 export type AiTask = 'capture' | 'schedule' | 'planner' | 'weeklyReview' | 'weeklyQA'
 
-/** OpenAI 兼容接口配置；界面拿不到明文 Key */
+/** AI 接口协议格式 */
+export type AiApiFormat = 'openai' | 'anthropic'
+export const AI_API_FORMATS: AiApiFormat[] = ['openai', 'anthropic']
+
+/** OpenAI 兼容 / Anthropic Messages 接口配置；界面拿不到明文 Key */
 export interface AiConfigView {
   enabled: boolean
+  apiFormat: AiApiFormat
   baseUrl: string
   model: string
   /** 识图用的模型，空表示和 model 相同 */

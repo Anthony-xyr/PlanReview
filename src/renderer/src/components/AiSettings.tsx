@@ -1,17 +1,18 @@
 import { useEffect, useState } from 'react'
-import type { AiConfigView, AiTask, ReasoningEffort } from '@shared/types'
+import type { AiApiFormat, AiConfigView, AiTask, ReasoningEffort } from '@shared/types'
 import { REASONING_EFFORTS } from '@shared/types'
 import { errorText } from '../ui'
 import { HabitsDialog } from './HabitsDialog'
 
 /** 常见服务的接口地址，选了自动填 */
-const PRESETS: { name: string; baseUrl: string; model: string; vision?: string }[] = [
-  { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' },
-  { name: '通义千问', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus', vision: 'qwen-vl-max' },
-  { name: 'Kimi', baseUrl: 'https://api.moonshot.cn/v1', model: 'kimi-latest' },
-  { name: '智谱', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-plus', vision: 'glm-4v-plus' },
-  { name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
-  { name: '本地 Ollama', baseUrl: 'http://localhost:11434/v1', model: '' }
+const PRESETS: { name: string; apiFormat: AiApiFormat; baseUrl: string; model: string; vision?: string }[] = [
+  { name: 'DeepSeek', apiFormat: 'openai', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' },
+  { name: '通义千问', apiFormat: 'openai', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus', vision: 'qwen-vl-max' },
+  { name: 'Kimi', apiFormat: 'openai', baseUrl: 'https://api.moonshot.cn/v1', model: 'kimi-latest' },
+  { name: '智谱', apiFormat: 'openai', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-plus', vision: 'glm-4v-plus' },
+  { name: 'OpenAI', apiFormat: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+  { name: 'Anthropic (Claude)', apiFormat: 'anthropic', baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-4-5' },
+  { name: '本地 Ollama', apiFormat: 'openai', baseUrl: 'http://localhost:11434/v1', model: '' }
 ]
 
 const EFFORT_LABEL: Record<ReasoningEffort, string> = { low: 'Low', medium: 'Medium', high: 'High' }
@@ -28,7 +29,8 @@ const EFFORT_TASKS: { key: AiTask; label: string; suggest: ReasoningEffort }[] =
 /** AI 设置：单独保存，不跟着设置对话框的「保存」走，这样能先测试再用 */
 export function AiSettings() {
   const [cfg, setCfg] = useState<AiConfigView | null>(null)
-  const [form, setForm] = useState<{ baseUrl: string; model: string; visionModel: string; reasoningEffort: Record<AiTask, ReasoningEffort> }>({
+  const [form, setForm] = useState<{ apiFormat: AiApiFormat; baseUrl: string; model: string; visionModel: string; reasoningEffort: Record<AiTask, ReasoningEffort> }>({
+    apiFormat: 'openai',
     baseUrl: '',
     model: '',
     visionModel: '',
@@ -45,7 +47,7 @@ export function AiSettings() {
     loadHabitCount()
     window.api.ai.getConfig().then((c) => {
       setCfg(c)
-      setForm({ baseUrl: c.baseUrl, model: c.model, visionModel: c.visionModel, reasoningEffort: c.reasoningEffort })
+      setForm({ apiFormat: c.apiFormat, baseUrl: c.baseUrl, model: c.model, visionModel: c.visionModel, reasoningEffort: c.reasoningEffort })
     })
   }, [])
 
@@ -74,7 +76,7 @@ export function AiSettings() {
     <section className="settings-section">
       <h3>AI</h3>
       <p className="muted">
-        这一栏单独保存。支持所有兼容 OpenAI 格式的服务。速记解析、课表导入、排时间、周复盘时，相关文字和图片会发给你配置的服务商；数据本身只存在本机。
+        这一栏单独保存。支持 OpenAI 兼容格式与 Anthropic Messages 格式的服务。速记解析、课表导入、排时间、周复盘时，相关文字和图片会发给你配置的服务商；数据本身只存在本机。
       </p>
       <label className="check">
         <input type="checkbox" checked={cfg.enabled} onChange={(e) => run(async () => (await save({ enabled: e.target.checked })).enabled ? '已开启 AI' : '已关闭 AI，不会再发送任何内容')} />
@@ -89,24 +91,48 @@ export function AiSettings() {
                 type="button"
                 key={p.name}
                 className="preset"
-                onClick={() => setForm({ ...form, baseUrl: p.baseUrl, model: p.model, visionModel: p.vision ?? '' })}
+                onClick={() => setForm({ ...form, apiFormat: p.apiFormat, baseUrl: p.baseUrl, model: p.model, visionModel: p.vision ?? '' })}
               >
                 {p.name}
               </button>
             ))}
           </div>
           <label className="field">
+            <span>接口格式</span>
+            <select
+              value={form.apiFormat}
+              onChange={(e) => setForm({ ...form, apiFormat: e.target.value as AiApiFormat })}
+            >
+              <option value="openai">OpenAI 兼容（/chat/completions）</option>
+              <option value="anthropic">Anthropic Messages（/v1/messages）</option>
+            </select>
+          </label>
+          <label className="field">
             <span>接口地址（Base URL）</span>
-            <input value={form.baseUrl} placeholder="https://api.deepseek.com" onChange={(e) => setForm({ ...form, baseUrl: e.target.value })} />
+            <input
+              value={form.baseUrl}
+              placeholder={form.apiFormat === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.deepseek.com'}
+              onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
+            />
           </label>
           <label className="field">
             <span>API Key {cfg.hasKey && <em className="muted">（已保存{cfg.keyEncrypted ? '，系统加密' : '，未加密'}；留空表示不改）</em>}</span>
-            <input type="password" autoComplete="off" value={key} placeholder={cfg.hasKey ? '••••••••' : 'sk-…'} onChange={(e) => setKey(e.target.value)} />
+            <input
+              type="password"
+              autoComplete="off"
+              value={key}
+              placeholder={cfg.hasKey ? '••••••••' : form.apiFormat === 'anthropic' ? 'sk-ant-…' : 'sk-…'}
+              onChange={(e) => setKey(e.target.value)}
+            />
           </label>
           <div className="field-row">
             <label className="field">
               <span>模型</span>
-              <input value={form.model} placeholder="deepseek-chat" onChange={(e) => setForm({ ...form, model: e.target.value })} />
+              <input
+                value={form.model}
+                placeholder={form.apiFormat === 'anthropic' ? 'claude-sonnet-4-5' : 'deepseek-chat'}
+                onChange={(e) => setForm({ ...form, model: e.target.value })}
+              />
             </label>
             <label className="field">
               <span>识图模型（可选）</span>
@@ -116,7 +142,7 @@ export function AiSettings() {
           <p className="muted">课表截图需要支持识图的模型。DeepSeek 目前不能识图，可以只上传 PDF / Excel，或另配一个识图模型。</p>
 
           <h4 className="settings-sub">推理强度</h4>
-          <p className="muted">模型支持时生效（reasoning_effort）。Low 最快，High 想得最深、也最慢。</p>
+          <p className="muted">OpenAI 兼容模型支持时生效（reasoning_effort）；Anthropic 格式会自动忽略该字段。Low 最快，High 想得最深、也最慢。</p>
           <div className="effort-grid">
             {EFFORT_TASKS.map((t) => (
               <label key={t.key} className="field">
