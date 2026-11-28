@@ -1,5 +1,5 @@
 import type { UpdateApi } from '../update'
-import type { AiConfigPatch, AiConfigView, CaptureDraft, CaptureHabit, CaptureParse, CaptureReparse, PlanSuggestion, SuggestedBlock } from './ai'
+import type { AiConfigPatch, AiConfigView, CaptureDraft, CaptureHabit, CaptureParse, CaptureReparse, HabitKind, PlanAcceptance, PlanReplan, PlanSuggestion, SuggestedBlock } from './ai'
 import type { Course, ImportFile, ScheduleDraft } from './course'
 import type { BlockInput, EntryInput, OverrunReason, PlanBlock, StartTimerInput, StopResult, StopTimerInput, TimeEntry } from './plan'
 import type { DailyReview, DailyReviewInput, DaySummary, Resurface, ResurfaceAction } from './review'
@@ -104,13 +104,13 @@ export interface Api {
     parseSchedule(files: ImportFile[], hint: string): Promise<ScheduleDraft>
   }
   habits: {
-    list(): Promise<CaptureHabit[]>
+    list(kind?: HabitKind): Promise<CaptureHabit[]>
     /** 记下一条习惯；replacesId 给了就改写那一条 */
-    add(text: string, example?: string, replacesId?: string | null): Promise<CaptureHabit>
-    update(id: string, patch: { text?: string; enabled?: boolean }): Promise<CaptureHabit>
-    remove(id: string): Promise<void>
+    add(text: string, example?: string, replacesId?: string | null, kind?: HabitKind): Promise<CaptureHabit>
+    update(id: string, patch: { text?: string; enabled?: boolean }, kind?: HabitKind): Promise<CaptureHabit>
+    remove(id: string, kind?: HabitKind): Promise<void>
     /** 确认保存速记后，记一次这些习惯的使用 */
-    markUsed(ids: string[]): Promise<void>
+    markUsed(ids: string[], kind?: HabitKind): Promise<void>
   }
   courses: {
     list(): Promise<Course[]>
@@ -151,7 +151,9 @@ export interface Api {
   planner: {
     /** 让 AI 给某一天出排程建议，只返回草稿，不写入 */
     suggest(day: string, hint: string): Promise<PlanSuggestion>
+    /** 按历次纠正重排，只生成草稿，不写入习惯 */
+    replan(day: string, hint: string, previous: SuggestedBlock[], feedback: string[]): Promise<PlanReplan>
     /** 写入用户勾选的建议时段 */
-    accept(day: string, blocks: SuggestedBlock[]): Promise<{ created: number }>
+    accept(day: string, blocks: SuggestedBlock[], confirmation?: PlanAcceptance): Promise<{ created: number }>
   }
 }

@@ -75,6 +75,9 @@ export interface CaptureHabit {
 export const MAX_HABITS = 30
 export const MAX_HABIT_CHARS = 120
 
+/** 习惯用在哪里；省略时仍是速记 */
+export type HabitKind = 'capture' | 'planner'
+
 // ---------- AI 排程 ----------
 
 export interface SuggestedBlock {
@@ -90,4 +93,18 @@ export interface PlanSuggestion {
   day: string
   blocks: SuggestedBlock[]
   notes: string[]
+  /** 这次 AI 说用到的排程习惯 */
+  habitIds: string[]
+}
+
+/** 纠正后的草稿；习惯建议仅在排进时间轴时确认保存 */
+export interface PlanReplan extends PlanSuggestion {
+  habit: string
+  replacesId: string | null
+}
+
+/** 与排程一起确认，主进程原子保存，失败时保留草稿供重试 */
+export interface PlanAcceptance {
+  habitIds?: string[]
+  habit?: { text: string; example?: string; replacesId?: string | null }
 }
