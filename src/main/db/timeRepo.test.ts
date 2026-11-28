@@ -158,6 +158,57 @@ describe('timer', () => {
     expect(time.listEntries(at('00:00'), at('23:59'))).toHaveLength(0)
   })
 
+  it('同一任务已在计时时，从计划块再次开始会复用记录并补上关联', () => {
+    const t = repo.capture('整理结果')
+    const b = time.createBlock({ taskId: t.id, startAt: at('12:00'), endAt: at('13:00') })
+    time.start({ taskId: t.id })
+    setNow('12:10')
+    const running = time.start({ taskId: t.id, planBlockId: b.id })
+    expect(running.planBlockId).toBe(b.id)
+    expect(running.startAt).toBe(at('12:00'))
+    expect(time.listEntries(at('00:00'), at('23:59')).filter((e) => e.taskId === t.id)).toHaveLength(1)
+  })
+
+  it('同一任务从计划块开始后再从待办开始，也不会切出新记录', () => {
+    const t = repo.capture('反向开始')
+    const b = time.createBlock({ taskId: t.id, startAt: at('12:00'), endAt: at('13:00') })
+    time.start({ taskId: t.id, planBlockId: b.id })
+    setNow('12:10')
+    const running = time.start({ taskId: t.id })
+    expect(running.id).toBe(time.running()?.id)
+    expect(running.planBlockId).toBe(b.id)
+    expect(time.listEntries(at('00:00'), at('23:59')).filter((e) => e.taskId === t.id)).toHaveLength(1)
+  })
+
+  it('重设计划块会重算目标并清除旧的延长状态', () => {
+    const t = repo.capture('重设目标')
+    const first = time.createBlock({ taskId: t.id, startAt: at('12:00'), endAt: at('13:00') })
+    const second = time.createBlock({ taskId: t.id, startAt: at('12:30'), endAt: at('14:00') })
+    time.start({ taskId: t.id })
+    setNow('12:10')
+    time.start({ taskId: t.id, planBlockId: first.id })
+    time.extend(15)
+    expect(time.running()?.extendedMin).toBe(15)
+    setNow('12:20')
+    const relinked = time.start({ taskId: t.id, planBlockId: second.id })
+    expect(relinked.planBlockId).toBe(second.id)
+    expect(relinked.plannedMin).toBe(100)
+    expect(relinked.extendedMin).toBe(0)
+    expect(relinked.overrunReason).toBeNull()
+    expect(relinked.startAt).toBe(at('12:00'))
+  })
+
+  it('同一计划块重复开始不会重置已延长的目标', () => {
+    const t = repo.capture('重复开始')
+    const b = time.createBlock({ taskId: t.id, startAt: at('12:00'), endAt: at('13:00') })
+    time.start({ taskId: t.id, planBlockId: b.id })
+    time.extend(15)
+    const target = time.running()?.targetEndAt
+    const running = time.start({ taskId: t.id, planBlockId: b.id })
+    expect(running.targetEndAt).toBe(target)
+    expect(running.extendedMin).toBe(15)
+  })
+
   it('开始新计时会先停掉旧的', () => {
     time.start({ title: 'a' })
     setNow('12:20')
